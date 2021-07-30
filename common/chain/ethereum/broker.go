@@ -3,11 +3,12 @@ package ethereum
 import (
 	"context"
 	"fmt"
+	"math/big"
+	"strings"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	ethBind "github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/shopspring/decimal"
-	"math/big"
-	"strings"
 
 	"github.com/mcdexio/mai3-broker/common/chain/ethereum/broker"
 	"github.com/mcdexio/mai3-broker/common/mai3"

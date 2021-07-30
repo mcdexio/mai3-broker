@@ -13,6 +13,8 @@ const (
 	// MaiV3GasForEachPerp int64 = 100000
 
 	// arbitrum
-	MaiV3BaseGas        int64 = 4800000
-	MaiV3GasForEachPerp int64 = 7300
+	MaiV3BaseGas                 int64 = 4800000
+	MaiV3GasForEachPerp          int64 = 7300
+	MaiV3BaseGasCloseOnly        int64 = 1129722
+	MaiV3GasForEachPerpCloseOnly int64 = 22330
 )

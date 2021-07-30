@@ -100,7 +100,7 @@ func (m *match) NewOrder(order *model.Order) string {
 	}
 
 	// check gas
-	order.GasFeeLimit = mai3.GetGasFeeLimit(len(poolStorage.Perpetuals))
+	order.GasFeeLimit = mai3.GetGasFeeLimit(len(poolStorage.Perpetuals), order.IsCloseOnly)
 	if conf.Conf.GasEnable {
 		gasBalance, err := m.chainCli.GetGasBalance(m.ctx, conf.Conf.BrokerAddress, order.TraderAddress)
 		if err != nil {
@@ -108,10 +108,11 @@ func (m *match) NewOrder(order *model.Order) string {
 			return model.MatchInternalErrorID
 		}
 		gasBalance = utils.ToWad(gasBalance)
-		gasPrice := m.gasMonitor.GasPriceGwei()
+		gasPrice := m.gasMonitor.GasPriceInWei()
 		gasReward := gasPrice.Mul(decimal.NewFromInt(order.GasFeeLimit))
+		// gasReward := utils.ToWad(decimal.NewFromFloat(0.0001))
 		ordersGasReword := gasReward.Mul(decimal.NewFromInt(int64(len(activeOrders) + 1)))
-		logger.Infof("gasPrice:%s gasBalance:%s gasReward:%s ordersGasReword:%s", gasPrice, gasBalance, gasReward, ordersGasReword)
+		logger.Infof("gasPrice:%s brokerFeeLimit:%s gasBalance:%s gasReward:%s ordersGasReword:%s", gasPrice, utils.ToGwei(decimal.NewFromInt(order.BrokerFeeLimit)), gasBalance, gasReward, ordersGasReword)
 		if gasBalance.LessThan(ordersGasReword) {
 			return model.MatchGasNotEnoughErrorID
 		}
@@ -175,6 +176,10 @@ func (m *match) NewOrder(order *model.Order) string {
 			},
 		}
 		m.wsChan <- wsMsg
+		// trigger match order
+		if len(m.trgr) < ChannelHWM {
+			m.trgr <- nil
+		}
 		return model.MatchOK
 	}
 	logger.Errorf("new order: %s", err)

@@ -26,34 +26,37 @@ func CopyLiquidityPoolStorage(p *model.LiquidityPoolStorage) *model.LiquidityPoo
 	res.PoolCashBalance = p.PoolCashBalance
 	res.VaultFeeRate = p.VaultFeeRate
 	for k, perp := range p.Perpetuals {
-		newPerp := &model.PerpetualStorage{
-			IsNormal:                perp.IsNormal,
-			MarkPrice:               perp.MarkPrice,
-			IndexPrice:              perp.IndexPrice,
-			UnitAccumulativeFunding: perp.UnitAccumulativeFunding,
-			InitialMarginRate:       perp.InitialMarginRate,
-			MaintenanceMarginRate:   perp.MaintenanceMarginRate,
-			OperatorFeeRate:         perp.OperatorFeeRate,
-			LpFeeRate:               perp.LpFeeRate,
-			ReferrerRebateRate:      perp.ReferrerRebateRate,
-			LiquidationPenaltyRate:  perp.LiquidationPenaltyRate,
-			KeeperGasReward:         perp.KeeperGasReward,
-			InsuranceFundRate:       perp.InsuranceFundRate,
-			OpenInterest:            perp.OpenInterest,
-			MaxOpenInterestRate:     perp.MaxOpenInterestRate,
-			HalfSpread:              perp.HalfSpread,
-			OpenSlippageFactor:      perp.OpenSlippageFactor,
-			CloseSlippageFactor:     perp.CloseSlippageFactor,
-			FundingRateFactor:       perp.FundingRateFactor,
-			FundingRateLimit:        perp.FundingRateLimit,
-			MaxLeverage:             perp.MaxLeverage,
-			MaxClosePriceDiscount:   perp.MaxClosePriceDiscount,
-			AmmCashBalance:          perp.AmmCashBalance,
-			AmmPositionAmount:       perp.AmmPositionAmount,
-		}
-		res.Perpetuals[k] = newPerp
+		res.Perpetuals[k] = CopyPerpetualStorage(perp)
 	}
 	return res
+}
+
+func CopyPerpetualStorage(perp *model.PerpetualStorage) *model.PerpetualStorage {
+	return &model.PerpetualStorage{
+		IsNormal:                perp.IsNormal,
+		MarkPrice:               perp.MarkPrice,
+		IndexPrice:              perp.IndexPrice,
+		UnitAccumulativeFunding: perp.UnitAccumulativeFunding,
+		InitialMarginRate:       perp.InitialMarginRate,
+		MaintenanceMarginRate:   perp.MaintenanceMarginRate,
+		OperatorFeeRate:         perp.OperatorFeeRate,
+		LpFeeRate:               perp.LpFeeRate,
+		ReferrerRebateRate:      perp.ReferrerRebateRate,
+		LiquidationPenaltyRate:  perp.LiquidationPenaltyRate,
+		KeeperGasReward:         perp.KeeperGasReward,
+		InsuranceFundRate:       perp.InsuranceFundRate,
+		OpenInterest:            perp.OpenInterest,
+		MaxOpenInterestRate:     perp.MaxOpenInterestRate,
+		HalfSpread:              perp.HalfSpread,
+		OpenSlippageFactor:      perp.OpenSlippageFactor,
+		CloseSlippageFactor:     perp.CloseSlippageFactor,
+		FundingRateFactor:       perp.FundingRateFactor,
+		FundingRateLimit:        perp.FundingRateLimit,
+		MaxLeverage:             perp.MaxLeverage,
+		MaxClosePriceDiscount:   perp.MaxClosePriceDiscount,
+		AmmCashBalance:          perp.AmmCashBalance,
+		AmmPositionAmount:       perp.AmmPositionAmount,
+	}
 }
 
 // just use for order, for using golden section search, the bounds is [0, order.amount]
@@ -144,7 +147,11 @@ func copyAMMTradingContext(ammContext *model.AMMTradingContext) *model.AMMTradin
 	}
 }
 
-// get the price if ΔN -> 0. equal to lim_(ΔN -> 0) (computeDeltaMargin / (ΔN))
+// get the price if ΔN -> 0. lim_(ΔN -> 0) (computeDeltaMargin / (ΔN))
+// this function implements all possible situations include:
+// * limit by α. this is P_{best} in the paper
+// * limit by δ when close
+// * amm unsafe
 func ComputeBestAskBidPrice(p *model.LiquidityPoolStorage, perpetualIndex int64, isAMMBuy bool) decimal.Decimal {
 	context := initAMMTradingContext(p, perpetualIndex)
 	isAMMClosing := false
@@ -153,6 +160,7 @@ func ComputeBestAskBidPrice(p *model.LiquidityPoolStorage, perpetualIndex int64,
 		isAMMClosing = true
 		beta = context.CloseSlippageFactor
 	}
+	// unsafe
 	if !isAMMSafe(context, beta) {
 		if !isAMMClosing {
 			logger.Errorf("ComputeBestAskBidPrice: AMM can not open position anymore: unsafe before trade")
@@ -160,11 +168,30 @@ func ComputeBestAskBidPrice(p *model.LiquidityPoolStorage, perpetualIndex int64,
 		}
 		return computeBestAskBidPriceIfUnsafe(context)
 	}
+	// safe: limit by α
 	if err := computeAMMPoolMargin(context, beta, false); err != nil {
 		logger.Errorf("ComputeBestAskBidPrice: computeAMMPoolMargin error:%s", err)
 		return _0
 	}
-	return computeBestAskBidPriceIfSafe(context, beta, isAMMBuy)
+	price := computeBestAskBidPriceIfSafe(context, beta, isAMMBuy)
+	if isAMMClosing {
+		// limit by δ
+		discount := context.MaxClosePriceDiscount
+		if context.Position1.GreaterThan(_0) {
+			discount = discount.Neg()
+		}
+		discountLimitPrice := _1.Add(discount).Mul(context.Index)
+		if isAMMBuy {
+			if price.GreaterThan(discountLimitPrice) {
+				return discountLimitPrice
+			}
+		} else {
+			if price.LessThan(discountLimitPrice) {
+				return discountLimitPrice
+			}
+		}
+	}
+	return price
 }
 
 // get the price if ΔN -> 0. equal to lim_(ΔN -> 0) (computeDeltaMargin / (ΔN))
@@ -275,7 +302,7 @@ func computeAMMCloseAndOpenAmountWithPrice(context *model.AMMTradingContext, lim
 		return _0
 	}
 
-	// case 1: limit by spread
+	// case 1: limit by α
 	ammSafe := isAMMSafe(context, context.CloseSlippageFactor)
 	if ammSafe {
 		if err := computeAMMPoolMargin(context, context.CloseSlippageFactor, false); err != nil {
@@ -297,7 +324,22 @@ func computeAMMCloseAndOpenAmountWithPrice(context *model.AMMTradingContext, lim
 		}
 	}
 
-	// case 2: limit by existing positions
+	// case 2: limit by δ
+	discount := context.MaxClosePriceDiscount
+	if context.Position1.GreaterThan(_0) {
+		discount = discount.Neg()
+	}
+	discountLimitPrice := _1.Add(discount).Mul(context.Index)
+	if isAMMBuy {
+		if limitPrice.GreaterThan(discountLimitPrice) {
+			return _0
+		}
+	} else {
+		if limitPrice.LessThan(discountLimitPrice) {
+			return _0
+		}
+	}
+	// case 3: if close all (amm position = 0), check the price
 	zeroContext, err := computeAMMInternalClose(context, context.Position1.Neg())
 	if err != nil {
 		logger.Errorf("computeAMMCloseAndOpenAmountWithPrice: computeAMMInternalClose err:%s", err)
@@ -313,10 +355,10 @@ func computeAMMCloseAndOpenAmountWithPrice(context *model.AMMTradingContext, lim
 		// close all
 		context = zeroContext
 	} else if !ammSafe {
-		// case 3: unsafe close, but price not matched
+		// case 4: unsafe close, but price not matched
 		return _0
 	} else {
-		// case 4: close by price
+		// case 5: close by price
 		amount, err := computeAMMInverseVWAP(context, limitPrice, context.CloseSlippageFactor, isAMMBuy)
 		if err != nil {
 			logger.Errorf("computeAMMCloseAndOpenAmountWithPrice: computeAMMInverseVWAP failed:%s", err)
@@ -328,8 +370,12 @@ func computeAMMCloseAndOpenAmountWithPrice(context *model.AMMTradingContext, lim
 				logger.Errorf("computeAMMCloseAndOpenAmountWithPrice: computeAMMInternalClose failed:%s", err)
 				return _0
 			}
+		} else {
+			// invalid close. only open is possible
 		}
 	}
+
+	// case 6: open positions
 	if (isAMMBuy && context.Position1.GreaterThanOrEqual(_0)) ||
 		(!isAMMBuy && context.Position1.LessThanOrEqual(_0)) {
 		openAmount := computeAMMOpenAmountWithPrice(context, limitPrice, isAMMBuy)

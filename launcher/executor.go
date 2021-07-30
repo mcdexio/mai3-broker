@@ -18,9 +18,9 @@ type Executor struct {
 	ctx        context.Context
 	dao        dao.DAO
 	runner     *runnable.Timed
+	match      *match.Server
 	chainCli   chain.ChainClient
 	gasMonitor *gasmonitor.GasMonitor
-	match      *match.Server
 }
 
 func NewExecutor(ctx context.Context, dao dao.DAO, chainCli chain.ChainClient, gm *gasmonitor.GasMonitor, match *match.Server) *Executor {
@@ -59,7 +59,6 @@ func (s *Executor) executeTransaction() {
 			logger.Warningf("commit new transaction failed for %v: %v", user, err)
 		}
 	}
-	return
 }
 
 func (s *Executor) sendTransaction(tx *model.LaunchTransaction) error {
@@ -127,7 +126,7 @@ func (s *Executor) reset(tx *model.LaunchTransaction) error {
 		if err := dao.UpdateTx(tx); err != nil {
 			return errors.Wrap(err, "update transaction failed")
 		}
-		err := s.match.UpdateOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime)
+		err := s.match.UpdateOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), "", "", 0, 0)
 		return err
 	})
 
@@ -161,7 +160,7 @@ func (s *Executor) prepare(tx *model.LaunchTransaction) error {
 
 	limit := conf.Conf.GasLimit
 	tx.GasLimit = &limit
-	price := s.gasMonitor.GasPriceGwei().BigInt().Uint64()
+	price := s.gasMonitor.GasPriceInWei().BigInt().Uint64()
 	tx.GasPrice = &price
 	return nil
 }

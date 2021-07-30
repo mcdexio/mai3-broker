@@ -1,10 +1,11 @@
 package api
 
 import (
+	"strings"
+
 	"github.com/mcdexio/mai3-broker/common/mai3"
 	"github.com/mcdexio/mai3-broker/conf"
 	"github.com/mcdexio/mai3-broker/dao"
-	"strings"
 )
 
 func (s *Server) GetPerpetual(p Param) (interface{}, error) {

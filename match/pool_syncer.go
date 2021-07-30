@@ -36,13 +36,25 @@ func newPoolSyncer(ctx context.Context, cli chain.ChainClient) *poolSyncer {
 }
 
 func (p *poolSyncer) Run() error {
+	var (
+		before  time.Time
+		elasped time.Duration
+		timer   = time.NewTimer(0)
+	)
 	for {
 		select {
 		case <-p.ctx.Done():
 			logger.Infof("pool syncer end")
 			return nil
-		case <-time.After(conf.Conf.PoolSyncerInterval):
+		case <-timer.C:
+			before = time.Now()
 			p.runSyncer()
+			elasped = time.Since(before)
+			if elasped >= conf.Conf.PoolSyncerInterval {
+				timer.Reset(0)
+			} else {
+				timer.Reset(conf.Conf.PoolSyncerInterval - elasped)
+			}
 		}
 	}
 }

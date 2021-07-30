@@ -130,6 +130,8 @@ func (s *Server) splitActiveOrdersInEachPerpetual(orders []*model.Order) (map[st
 					cancels = append(cancels, cancel)
 					continue
 				}
+				// pending amount set to zero for monitor
+				order.PendingAmount = decimal.Zero
 				ordersPerp.Orders = append(ordersPerp.Orders, order)
 			} else {
 				poolStorage := s.poolSyncer.GetPoolStorage(order.LiquidityPoolAddress)
@@ -198,6 +200,8 @@ func (s *Server) splitActiveOrdersInEachPerpetual(orders []*model.Order) (map[st
 				OrderMap:      make(map[string]*OrdersPerpMap),
 			}
 
+			// pending amount set to zero for monitor
+			order.PendingAmount = decimal.Zero
 			res[order.CollateralAddress].OrderMap[perpetualID] = &OrdersPerpMap{
 				LiquidityPoolAddress: order.LiquidityPoolAddress,
 				PerpetualIndex:       order.PerpetualIndex,

@@ -7,12 +7,35 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSqrt(t *testing.T) {
-	n := Sqrt(decimal.NewFromInt(25))
-	assert.Equal(t, true, decimal.NewFromInt(5).Equal(n))
+func mustNewDecimalFromString(s string) decimal.Decimal {
+	if ret, err := decimal.NewFromString(s); err != nil {
+		panic(err)
+	} else {
+		return ret
+	}
+}
 
-	n1 := Sqrt(decimal.NewFromFloat(3.56666))
-	Approximate(t, decimal.NewFromFloat(1.888560298216607115), n1)
+func TestSqrt(t *testing.T) {
+	assert.Equal(t, true, mustNewDecimalFromString("0").Equal(Sqrt(mustNewDecimalFromString("0"))))
+	Approximate(t, mustNewDecimalFromString("0"), Sqrt(mustNewDecimalFromString("1e-36")))
+	Approximate(t, mustNewDecimalFromString("1e-18"), Sqrt(mustNewDecimalFromString("2e-36")))
+	Approximate(t, mustNewDecimalFromString("1e-18"), Sqrt(mustNewDecimalFromString("3e-36")))
+	Approximate(t, mustNewDecimalFromString("2e-18"), Sqrt(mustNewDecimalFromString("4e-36")))
+	Approximate(t, mustNewDecimalFromString("2e-18"), Sqrt(mustNewDecimalFromString("5e-36")))
+	Approximate(t, mustNewDecimalFromString("2e-18"), Sqrt(mustNewDecimalFromString("6e-36")))
+	Approximate(t, mustNewDecimalFromString("2e-18"), Sqrt(mustNewDecimalFromString("7e-36")))
+	Approximate(t, mustNewDecimalFromString("2e-18"), Sqrt(mustNewDecimalFromString("8e-36")))
+	Approximate(t, mustNewDecimalFromString("3e-18"), Sqrt(mustNewDecimalFromString("9e-36")))
+	Approximate(t, mustNewDecimalFromString("1e-9"), Sqrt(mustNewDecimalFromString("1e-18")))
+	assert.Equal(t, true, mustNewDecimalFromString("0.35").Equal(Sqrt(mustNewDecimalFromString("0.1225"))))
+	assert.Equal(t, true, mustNewDecimalFromString("1").Equal(Sqrt(mustNewDecimalFromString("1"))))
+	assert.Equal(t, true, mustNewDecimalFromString("5").Equal(Sqrt(mustNewDecimalFromString("25"))))
+	assert.Equal(t, true, mustNewDecimalFromString("7e4").Equal(Sqrt(mustNewDecimalFromString("49e8"))))
+	assert.Equal(t, true, mustNewDecimalFromString("1e12").Equal(Sqrt(mustNewDecimalFromString("1e24"))))
+	Approximate(t, mustNewDecimalFromString("1.888560298216607115171146459645"), Sqrt(mustNewDecimalFromString("3.56666")))
+	Approximate(t, mustNewDecimalFromString("1356432.176631032297040481823579"), Sqrt(mustNewDecimalFromString("1839908249800")))
+	Approximate(t, mustNewDecimalFromString("170141183460469231731.687303715884105728"), Sqrt(mustNewDecimalFromString("28948022309329048855892746252171976963317.496166410141009864396001978282409984")))
+	Approximate(t, mustNewDecimalFromString("240615969168004511545.033772477625056927"), Sqrt(mustNewDecimalFromString("57896044618658097711785492504343953926634.992332820282019728792003956564819967")))
 }
 
 func TestGss(t *testing.T) {

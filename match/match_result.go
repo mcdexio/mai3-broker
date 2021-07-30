@@ -30,8 +30,8 @@ func (m *match) UpdateOrdersStatus(txID string, status model.TransactionStatus, 
 		}
 		matchTx.BlockConfirmed = true
 		matchTx.Status = status
-		matchTx.TransactionHash = null.StringFrom(transactionHash)
 		if (matchTx.Status == model.TransactionStatusFail || matchTx.Status == model.TransactionStatusSuccess) && blockNumber > 0 {
+			matchTx.TransactionHash = null.StringFrom(transactionHash)
 			matchTx.BlockHash = null.StringFrom(blockHash)
 			matchTx.BlockNumber = null.IntFrom(int64(blockNumber))
 			matchTx.ExecutedAt = null.TimeFrom(time.Unix(int64(blockTime), 0).UTC())
@@ -58,8 +58,10 @@ func (m *match) UpdateOrdersStatus(txID string, status model.TransactionStatus, 
 			wsMsg := message.WebSocketMessage{
 				ChannelID: message.GetAccountChannelID(order.TraderAddress),
 				Payload: message.WebSocketOrderChangePayload{
-					Type:  message.WsTypeOrderChange,
-					Order: order,
+					Type:            message.WsTypeOrderChange,
+					Order:           order,
+					BlockNumber:     blockNumber,
+					TransactionHash: transactionHash,
 				},
 			}
 			m.wsChan <- wsMsg

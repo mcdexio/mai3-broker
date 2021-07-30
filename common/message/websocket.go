@@ -12,8 +12,10 @@ type WebSocketMessage struct {
 }
 
 type WebSocketOrderChangePayload struct {
-	Type  string      `json:"type"`
-	Order interface{} `json:"order"`
+	Type            string      `json:"type"`
+	Order           interface{} `json:"order"`
+	BlockNumber     uint64      `json:"blockNumber"`
+	TransactionHash string      `json:"transaction_hash"`
 }
 
 const AccountChannelPrefix = "TraderAddress"

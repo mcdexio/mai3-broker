@@ -47,7 +47,6 @@ func (s *Monitor) syncUnmatureTransaction() {
 	}
 	begin := blockNumber - conf.Conf.MatureBlockCount
 	s.updateUnmatureTransactionStatus(&begin)
-	return
 }
 
 func (s *Monitor) updateUnmatureTransactionStatus(blockNumber *uint64) {
@@ -65,7 +64,7 @@ func (s *Monitor) updateUnmatureTransactionStatus(blockNumber *uint64) {
 	for _, tx := range txs {
 		if tx.TransactionHash == nil || tx.BlockNumber == nil {
 			logger.Errorf("transaction hash or blockNumber is nill txID:%s", tx.TxID)
-			return
+			continue
 		}
 
 		receipt, err := s.chainCli.WaitTransactionReceipt(*tx.TransactionHash)
@@ -75,11 +74,11 @@ func (s *Monitor) updateUnmatureTransactionStatus(blockNumber *uint64) {
 				err = s.match.RollbackOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime)
 				if err != nil {
 					logger.Warnf("transactionHash:%s not found, RollbackOrdersStatus fail txID: %s, err:%s", *tx.TransactionHash, tx.TxID, err)
-					return
+					continue
 				}
 			}
 		}
-		if receipt == nil || err != nil {
+		if err != nil || receipt == nil {
 			logger.Errorf("WaitTransactionReceipt error: %s", err)
 			continue
 		}

@@ -64,7 +64,7 @@ func (s *Server) Start() error {
 		match, err := s.newMatch(perpetual)
 		if err != nil {
 			logger.Errorf("New SubMatch Server newMatch:%v", err)
-			return err
+			continue
 		}
 		s.group.Go(func() error {
 			return match.RunMatch(s.ctx)

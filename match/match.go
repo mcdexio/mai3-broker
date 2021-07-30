@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+var ChannelHWM = 64
+
 type match struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -31,6 +33,7 @@ type match struct {
 	gasMonitor *gasmonitor.GasMonitor
 	dao        dao.DAO
 	timers     map[string]*time.Timer
+	trgr       chan interface{}
 }
 
 func newMatch(ctx context.Context, cli chain.ChainClient, dao dao.DAO, poolSyncer *poolSyncer, perpetual *model.Perpetual, wsChan chan interface{}, gm *gasmonitor.GasMonitor) (*match, error) {
@@ -46,6 +49,7 @@ func newMatch(ctx context.Context, cli chain.ChainClient, dao dao.DAO, poolSynce
 		gasMonitor: gm,
 		dao:        dao,
 		timers:     make(map[string]*time.Timer),
+		trgr:       make(chan interface{}, ChannelHWM),
 	}
 
 	if err := m.reloadActiveOrders(); err != nil {
@@ -91,7 +95,10 @@ func (m *match) matchOrders() {
 	// 	return
 	// }
 
+	now := time.Now()
 	matchItems := m.MatchOrderSideBySide()
+	logger.Infof("matchOrders %s-%d MatchOrderSideBySide cost: %0.4f", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex, time.Since(now).Seconds())
+
 	if len(matchItems) == 0 {
 		return
 	}
@@ -165,17 +172,31 @@ func (m *match) matchOrders() {
 	} else {
 		logger.Errorf("match orders fail. error:%s", err)
 	}
+
 }
 
 func (m *match) RunMatch(ctx context.Context) error {
-	logger.Infof("match perpetual:%s-%d matchOrders start", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex)
+	// logger.Infof("match perpetual:%s-%d matchOrders start", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex)
+	var (
+		before  time.Time
+		elasped time.Duration
+		timer   = time.NewTimer(0)
+	)
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Infof("match perpetual:%s-%d matchOrders end", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex)
+			// logger.Infof("match perpetual:%s-%d matchOrders end", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex)
 			return nil
-		case <-time.After(conf.Conf.MatchInterval):
-			m.matchOrders()
+		case <-m.trgr:
+		case <-timer.C:
+		}
+		before = time.Now()
+		m.matchOrders()
+		elasped = time.Since(before)
+		if elasped >= conf.Conf.MatchInterval {
+			timer.Reset(time.Second)
+		} else {
+			timer.Reset(conf.Conf.MatchInterval - elasped)
 		}
 	}
 }

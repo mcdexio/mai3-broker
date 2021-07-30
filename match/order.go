@@ -2,6 +2,7 @@ package match
 
 import (
 	"sort"
+	"time"
 
 	"github.com/mcdexio/mai3-broker/common/mai3"
 	"github.com/mcdexio/mai3-broker/common/mai3/utils"
@@ -18,11 +19,11 @@ var _1 = decimal.NewFromInt(1)
 
 func splitActiveOrders(orders []*model.Order) (buys, sells []*model.Order) {
 	for _, order := range orders {
-		amount := order.AvailableAmount.Add(order.PendingAmount)
-		if amount.LessThan(decimal.Zero) {
+		order.CheckAmount = order.AvailableAmount.Add(order.PendingAmount)
+		if order.CheckAmount.LessThan(decimal.Zero) {
 			// sell
 			sells = append(sells, order)
-		} else if amount.GreaterThan(decimal.Zero) {
+		} else if order.CheckAmount.GreaterThan(decimal.Zero) {
 			// buy
 			buys = append(buys, order)
 		}
@@ -41,7 +42,7 @@ func openOrderCost(pool *model.LiquidityPoolStorage, perpetualIndex int64, order
 	if !ok {
 		return
 	}
-	amount := order.AvailableAmount.Add(order.PendingAmount)
+	amount := order.CheckAmount
 	feeRate := pool.VaultFeeRate.Add(perp.LpFeeRate).Add(perp.OperatorFeeRate)
 	potentialPNL := perp.MarkPrice.Sub(order.Price).Mul(amount)
 	// loss = pnl if pnl < 0 else 0
@@ -76,11 +77,14 @@ func sideAvailable(pool *model.LiquidityPoolStorage, perpetualIndex int64, margi
 	remainMargin := marginBalance
 	remainOrders := make([]*model.Order, 0)
 	for _, order := range orders {
-		amount := order.AvailableAmount.Add(order.PendingAmount)
+		amount := order.CheckAmount
 		close, _ := utils.SplitAmount(remainPosition, amount)
 		if !close.IsZero() {
 			newPosition := remainPosition.Add(close)
 			newPositionMargin := perpetual.MarkPrice.Mul(newPosition.Abs()).Mul(perpetual.InitialMarginRate)
+			if !newPosition.IsZero() {
+				newPositionMargin = newPositionMargin.Add(perpetual.KeeperGasReward)
+			}
 			potentialPNL := perpetual.MarkPrice.Sub(order.Price).Mul(close)
 			// loss = pnl if pnl < 0 else 0
 			potentialLoss := decimal.Min(potentialPNL, _0)
@@ -109,10 +113,14 @@ func sideAvailable(pool *model.LiquidityPoolStorage, perpetualIndex int64, margi
 				withdraw := _0
 				if afterMargin.GreaterThanOrEqual(newPositionMargin) {
 					// withdraw only if marginBalance >= IM
-					// withdraw = afterMargin - remainMargin * (1 - | close / remainPosition |)
+					// withdraw = afterMargin - reserved2 - (remainMargin - reserved1) * (1 - | close / remainPosition |)
 					withdraw = close.Div(remainPosition).Abs()
-					withdraw = _1.Sub(withdraw).Mul(remainMargin)
+					withdraw = _1.Sub(withdraw).Mul(remainMargin.Sub(perpetual.KeeperGasReward))
 					withdraw = afterMargin.Sub(withdraw)
+					if !newPosition.IsZero() {
+						withdraw = withdraw.Sub(perpetual.KeeperGasReward)
+					}
+					// never deposit when close
 					withdraw = decimal.Max(_0, withdraw)
 				}
 				remainMargin = afterMargin.Sub(withdraw)
@@ -120,8 +128,7 @@ func sideAvailable(pool *model.LiquidityPoolStorage, perpetualIndex int64, margi
 				remainPosition = remainPosition.Add(close)
 				newOrderAmount := amount.Sub(close)
 				if !newOrderAmount.IsZero() {
-					// update order amount just for checking below, can not save order in db
-					order.AvailableAmount = newOrderAmount.Sub(order.PendingAmount)
+					order.CheckAmount = newOrderAmount
 					remainOrders = append(remainOrders, order)
 				}
 			}
@@ -139,13 +146,15 @@ func sideAvailable(pool *model.LiquidityPoolStorage, perpetualIndex int64, margi
 	// open position
 	for _, order := range remainOrders {
 		cost, fee, potentialLoss := openOrderCost(pool, perpetualIndex, order, targetLeverage)
-		remainPosition = remainPosition.Add(order.AvailableAmount.Add(order.PendingAmount))
+		if remainPosition.IsZero() {
+			cost = cost.Add(perpetual.KeeperGasReward)
+		}
+		remainPosition = remainPosition.Add(order.CheckAmount)
 		remainMargin = remainMargin.Add(potentialLoss).Sub(fee)
 		// at least IM and keeperGasReward
-		im := perpetual.MarkPrice.Mul(remainPosition.Abs()).Mul(perpetual.InitialMarginRate)
+		im := perpetual.MarkPrice.Mul(remainPosition.Abs()).Mul(perpetual.InitialMarginRate).Add(perpetual.KeeperGasReward)
 		cost = decimal.Max(
 			im.Sub(remainMargin),
-			perpetual.KeeperGasReward.Sub(remainMargin),
 			cost,
 		)
 		remainMargin = remainMargin.Add(cost)
@@ -231,19 +240,25 @@ func (m *match) MatchOrderSideBySide() []*MatchItem {
 		return result
 	}
 
-	orderGasLimit := mai3.GetGasFeeLimit(len(poolStorage.Perpetuals))
+	orderGasLimit := mai3.GetGasFeeLimit(len(poolStorage.Perpetuals), false)
 	maiV3MaxMatchGroup := conf.Conf.GasLimit / uint64(orderGasLimit)
 
+	now := time.Now()
 	for {
 		if len(bidPrices) > bidIdx {
+			now = time.Now()
 			result, bidContinue = m.matchOneSide(poolStorage, bidPrices[bidIdx], true, result, maiV3MaxMatchGroup)
+			logger.Infof("matchOneSide %s-%d cost: %0.4f", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex, time.Since(now).Seconds())
+
 			bidIdx++
 		} else {
 			bidContinue = false
 		}
 
 		if len(askPrices) > askIdx {
+			now = time.Now()
 			result, askContinue = m.matchOneSide(poolStorage, askPrices[askIdx], false, result, maiV3MaxMatchGroup)
+			logger.Infof("matchOneSide %s-%d cost: %0.4f", m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex, time.Since(now).Seconds())
 			askIdx++
 		} else {
 			askContinue = false
@@ -273,7 +288,9 @@ func (m *match) matchOneSide(poolStorage *model.LiquidityPoolStorage, tradePrice
 		return result, false
 	}
 
+	now := time.Now()
 	maxTradeAmount := mai3.ComputeAMMAmountWithPrice(poolStorage, m.perpetual.PerpetualIndex, isBuy, tradePrice)
+	logger.Infof("mai3 ComputeAMMAmountWithPrice cost:%0.4f", time.Since(now).Seconds())
 	logger.Infof("maxAmount:%s, isBuy:%v, tradePrice:%s perpetual:%s-%d ", maxTradeAmount, isBuy, tradePrice, m.perpetual.LiquidityPoolAddress, m.perpetual.PerpetualIndex)
 	if maxTradeAmount.IsZero() || !utils.HasTheSameSign(maxTradeAmount, orders[0].Amount) {
 		return result, false

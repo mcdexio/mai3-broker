@@ -178,7 +178,10 @@ func GetOrderHash(traderAddress, brokerAddress, relayerAddress, referrerAddress,
 	return hash, nil
 }
 
-func GetGasFeeLimit(perpetualCount int) int64 {
+func GetGasFeeLimit(perpetualCount int, isCloseOnly bool) int64 {
+	if isCloseOnly {
+		return MaiV3BaseGasCloseOnly + MaiV3GasForEachPerpCloseOnly*int64(perpetualCount)
+	}
 	return MaiV3BaseGas + MaiV3GasForEachPerp*int64(perpetualCount)
 }
 

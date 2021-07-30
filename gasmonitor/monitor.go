@@ -28,8 +28,8 @@ func NewGasMonitor(ctx context.Context, cli chain.ChainClient) *GasMonitor {
 	return gasMonitor
 }
 
-// GasPriceGwei return gas in gwei decimal
-func (p *GasMonitor) GasPriceGwei() decimal.Decimal {
+// GasPricewei return gas in wei decimal
+func (p *GasMonitor) GasPriceInWei() decimal.Decimal {
 	return p.gasPrice
 }
 

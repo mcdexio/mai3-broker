@@ -28,9 +28,10 @@ func ComputeAccount(p *model.LiquidityPoolStorage, perpetualIndex int64, a *mode
 	isIMSafe := availableMargin.GreaterThanOrEqual(_0)
 	isMMSafe := marginBalance.Sub(maintenanceMargin).Sub(reservedCash).GreaterThanOrEqual(_0)
 	isMarginSafe := marginBalance.GreaterThanOrEqual(reservedCash)
+	marginWithoutReserved := marginBalance.Sub(reservedCash)
 	leverage := _0
-	if positionValue.GreaterThan(_0) && marginBalance.GreaterThan(_0) {
-		leverage = positionValue.Div(marginBalance)
+	if positionValue.GreaterThan(_0) && marginWithoutReserved.GreaterThan(_0) {
+		leverage = positionValue.Div(marginWithoutReserved)
 	}
 
 	return &model.AccountComputed{
@@ -181,7 +182,7 @@ func ComputeTradeWithPrice(p *model.LiquidityPoolStorage, perpetualIndex int64, 
 	}
 
 	if adjustMargin.GreaterThan(a.WalletBalance) {
-		return nil, false, _0, fmt.Errorf("wallet balance not enough for trading")
+		return nil, false, _0, fmt.Errorf("wallet balance not enough for trading adjustMargin:%s wallet:%s", adjustMargin, a.WalletBalance)
 	}
 	a.CashBalance = a.CashBalance.Add(adjustMargin)
 	a.WalletBalance = a.WalletBalance.Sub(adjustMargin)
@@ -211,10 +212,14 @@ func adjustMarginLeverage(p *model.LiquidityPoolStorage, perpetualIndex int64, a
 	position2 := trader.PositionAmount
 	if !close.IsZero() && open.IsZero() {
 		// close only
-		// when close, keep the effective leverage
-		// -withdraw == (availableCash2 * close - (deltaCash - fee) * position2) / position1
+		// when close, keep the margin ratio
+		// -withdraw == (availableCash2 * close - (deltaCash - fee) * position2 + reservedValue) / position1
+		// reservedValue = 0 if position2 == 0 else keeperGasReward * (-deltaPos)
 		adjustCollateral = a.AvailableCashBalance.Mul(close)
 		adjustCollateral = adjustCollateral.Sub(deltaCash.Sub(totalFee).Mul(position2))
+		if !position2.IsZero() {
+			adjustCollateral = adjustCollateral.Sub(perpetual.KeeperGasReward.Mul(close))
+		}
 		adjustCollateral = adjustCollateral.Div(position2.Sub(close))
 		// withdraw only when IM is satisfied
 		limit := a.AvailableMargin.Neg()
@@ -231,7 +236,8 @@ func adjustMarginLeverage(p *model.LiquidityPoolStorage, perpetualIndex int64, a
 		openPositionMargin := open.Abs().Mul(perpetual.MarkPrice).Div(trader.TargetLeverage)
 		if position2.Sub(deltaPosition).IsZero() || !close.IsZero() {
 			// strategy: let new margin balance = openPositionMargin
-			adjustCollateral = openPositionMargin.Sub(a.MarginBalance)
+			adjustCollateral = openPositionMargin.Add(perpetual.KeeperGasReward)
+			adjustCollateral = adjustCollateral.Sub(a.MarginBalance)
 		} else {
 			// strategy: always append positionMargin of openPosition
 			// adjustCollateral = openPositionMargin + pnl + fee

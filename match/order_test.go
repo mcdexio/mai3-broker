@@ -76,7 +76,7 @@ func TestComputeOrderAvailable1(t *testing.T) {
 	}
 	order.Price = decimal.NewFromFloat(6900)
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
 
@@ -87,11 +87,11 @@ func TestComputeOrderAvailable1(t *testing.T) {
 // empty order book. close + open. withdraw covers deposit
 func TestComputeOrderAvailable2(t *testing.T) {
 	order := &model.Order{
-		AvailableAmount: decimal.NewFromFloat(-3.3),
+		CheckAmount: decimal.NewFromFloat(-3.3),
 	}
 	order.Price = decimal.NewFromFloat(6900)
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
 	accountStorage1.WalletBalance = _0
@@ -103,7 +103,7 @@ func TestComputeOrderAvailable2(t *testing.T) {
 	Approximate(t, decimal.NewFromFloat(23695.57634375), computeAccount.MarginBalance)
 
 	_, remainWalletBalance := sideAvailable(poolStorage, TEST_MARKET_INDEX0, computeAccount.MarginBalance, accountStorage1.PositionAmount, accountStorage1.TargetLeverage, accountStorage1.WalletBalance, []*model.Order{order})
-	Approximate(t, decimal.NewFromFloat(19975.80634375), remainWalletBalance)
+	Approximate(t, decimal.NewFromFloat(19974.80634375), remainWalletBalance)
 }
 
 // empty order book. close + open
@@ -114,7 +114,7 @@ func TestComputeOrderAvailable3(t *testing.T) {
 	order.Price = decimal.NewFromFloat(6900)
 
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
 	accountStorage1.WalletBalance = _0
@@ -122,9 +122,9 @@ func TestComputeOrderAvailable3(t *testing.T) {
 	// marginBalance = 23695.57634375
 	// withdraw = 23695.57634375 - (6965 - 6900)*2.3 - 6900*2.3*0.001 = 23530.20634375
 	// deposit = (10 - 2.3)*6965/2 + (10 - 2.3)*6900*0.001 + (6965 - 6900)*(10 - 2.3) = 27368.9
-	// cost = deposit - withdraw = 3838.67365625
+	// cost = deposit - withdraw = 3839.67365625
 	_, available := ComputeOrderAvailable(poolStorage, TEST_MARKET_INDEX0, accountStorage1, []*model.Order{order})
-	Approximate(t, decimal.NewFromFloat(-3838.67365625), available)
+	Approximate(t, decimal.NewFromFloat(-3839.67365625), available)
 }
 
 // empty order book. pos = 0 but cash > 0. open short. limit < mark
@@ -135,15 +135,14 @@ func TestComputeOrderAvailable4(t *testing.T) {
 	order.Price = decimal.NewFromFloat(6900)
 
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
-	accountStorage1.WalletBalance = _0
 
-	// deposit = 10*6965/2 + 10*6900*0.001 + (6965 - 6900)*10 = 35544
-	// cost = deposit - 1000 = 34544
+	// deposit = 10*6965/2 + 10*6900*0.001 + (6965 - 6900)*10 = 35545
+	// cost = deposit - 1000 = 34545
 	_, available := ComputeOrderAvailable(poolStorage, TEST_MARKET_INDEX0, accountStorage0, []*model.Order{order})
-	Approximate(t, decimal.NewFromFloat(-34544), available)
+	Approximate(t, decimal.NewFromFloat(-34545), available)
 }
 
 // empty order book. pos = 0 but cash > 0. open short. limit > mark
@@ -154,14 +153,15 @@ func TestComputeOrderAvailable5(t *testing.T) {
 	order.Price = decimal.NewFromFloat(7000)
 
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
 
-	// deposit = 10*7000/2 + 10*7000*0.001 + 0(profit) = 35070
+	// deposit = 10*7000/2 + 10*7000*0.001 + 0(profit) = 35071
 	// cost = deposit - 1000 = 34070
+
 	_, available := ComputeOrderAvailable(poolStorage, TEST_MARKET_INDEX0, accountStorage0, []*model.Order{order})
-	Approximate(t, decimal.NewFromFloat(-34070), available)
+	Approximate(t, decimal.NewFromFloat(-34071), available)
 }
 
 // empty order book. pos = 0 but cash > 0. open long. limit < mark
@@ -172,14 +172,14 @@ func TestComputeOrderAvailable6(t *testing.T) {
 	order.Price = decimal.NewFromFloat(6900)
 
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
 
-	// deposit = 10*6900/2 + 10*6900*0.001 + 0(profit) = 34569
-	// cost = deposit - 1000 = 33569
+	// deposit = 10*6900/2 + 10*6900*0.001 + 0(profit) = 33570
+	// cost = deposit - 1000 = 33570
 	_, available := ComputeOrderAvailable(poolStorage, TEST_MARKET_INDEX0, accountStorage0, []*model.Order{order})
-	Approximate(t, decimal.NewFromFloat(-33569), available)
+	Approximate(t, decimal.NewFromFloat(-33570), available)
 }
 
 // empty order book. pos = 0 but cash > 0. open long. limit > mark
@@ -190,12 +190,12 @@ func TestComputeOrderAvailable7(t *testing.T) {
 	order.Price = decimal.NewFromFloat(7000)
 
 	poolStorage := defaultPool
-	perpetual1.AmmCashBalance = decimal.NewFromFloat(2.3)
+	perpetual1.AmmPositionAmount = decimal.NewFromFloat(2.3)
 	poolStorage.PoolCashBalance = decimal.NewFromFloat(83941.29865625)
 	poolStorage.Perpetuals[TEST_MARKET_INDEX0] = perpetual1
 
-	// deposit = 10*7000/2 + 10*7000*0.001 + (7000 - 6965)*10 = 35420
-	// cost = deposit - 1000 = 34420
+	// deposit = 10*7000/2 + 10*7000*0.001 + (7000 - 6965)*10 = 35421
+	// cost = deposit - 1000 = 34421
 	_, available := ComputeOrderAvailable(poolStorage, TEST_MARKET_INDEX0, accountStorage0, []*model.Order{order})
-	Approximate(t, decimal.NewFromFloat(-34420), available)
+	Approximate(t, decimal.NewFromFloat(-34421), available)
 }
