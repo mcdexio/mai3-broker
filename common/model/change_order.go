@@ -2,12 +2,11 @@ package model
 
 import (
 	"fmt"
-	"time"
-
 	"github.com/mcdexio/mai3-broker/common/mai3/utils"
 	"github.com/shopspring/decimal"
 	logger "github.com/sirupsen/logrus"
 	"gopkg.in/guregu/null.v3"
+	"time"
 )
 
 func addCancelReason(order *Order, reason CancelReasonType, amount decimal.Decimal, tradeID string, transactionHash string, executedAt null.Time) {

@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"math/big"
 
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/mcdexio/mai3-broker/common/model"
 	"github.com/shopspring/decimal"
 )
@@ -34,7 +35,8 @@ type ChainClient interface {
 	WaitTransactionReceipt(txHash string) (*model.Receipt, error)
 	GetAccountStorage(ctx context.Context, readerAddress string, perpetualIndex int64, poolAddress, account string) (*model.AccountStorage, error)
 	GetLiquidityPoolStorage(ctx context.Context, readerAddress, poolAddress string) (*model.LiquidityPoolStorage, error)
-	FilterTradeSuccess(ctx context.Context, poolAddress string, start, end uint64) ([]*model.TradeSuccessEvent, error)
-	FilterTradeFailed(ctx context.Context, poolAddress string, start, end uint64) ([]*model.TradeFailedEvent, error)
+	FilterTradeSuccess(ctx context.Context, brokerAddress string, start, end uint64) ([]*model.TradeSuccessEvent, error)
+	FilterTradeFailed(ctx context.Context, brokerAddress string, start, end uint64) ([]*model.TradeFailedEvent, error)
 	BatchTradeDataPack(compressedOrders [][]byte, matchAmounts []decimal.Decimal, gasRewards []*big.Int) ([]byte, error)
+	ParseLogs(brokerAddress string, logs []*ethtypes.Log) ([]*model.TradeSuccessEvent, []*model.TradeFailedEvent)
 }

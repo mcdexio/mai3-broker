@@ -24,6 +24,7 @@ import (
 )
 
 func main() {
+	logger.SetOutput(os.Stdout)
 	backgroundCtx, stop := context.WithCancel(context.Background())
 	go WaitExitSignal(stop)
 

@@ -126,3 +126,13 @@ func (p *poolSyncer) GetPoolStorage(pool string) *model.LiquidityPoolStorage {
 	}
 	return info.storage
 }
+
+func (p *poolSyncer) SetPoolStorageDirty(pool string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	info, ok := p.poolStorage[pool]
+	if info == nil && !ok {
+		return
+	}
+	info.isDirty = true
+}

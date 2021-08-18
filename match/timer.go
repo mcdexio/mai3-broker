@@ -16,6 +16,8 @@ func (m *match) onOrderExpired(orderID string) {
 }
 
 func (m *match) setExpirationTimer(orderID string, expiresAt time.Time) error {
+	m.timerMu.Lock()
+	defer m.timerMu.Unlock()
 	now := time.Now().UTC()
 	if !expiresAt.After(now) {
 		go m.onOrderExpired(orderID)
@@ -30,6 +32,8 @@ func (m *match) setExpirationTimer(orderID string, expiresAt time.Time) error {
 }
 
 func (m *match) stopTimers() {
+	m.timerMu.Lock()
+	defer m.timerMu.Unlock()
 	for k, t := range m.timers {
 		t.Stop()
 		delete(m.timers, k)
@@ -37,6 +41,8 @@ func (m *match) stopTimers() {
 }
 
 func (m *match) deleteOrderTimer(orderID string) bool {
+	m.timerMu.Lock()
+	defer m.timerMu.Unlock()
 	if t, ok := m.timers[orderID]; ok {
 		t.Stop()
 		delete(m.timers, orderID)

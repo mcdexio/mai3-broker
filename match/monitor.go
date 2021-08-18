@@ -49,7 +49,7 @@ func (s *Server) checkPerpUserOrders() {
 		for _, cancel := range cancels {
 			handler := s.getMatchHandler(cancel.LiquidityPoolAddress, cancel.PerpetualIndex)
 			if handler != nil {
-				err := handler.CancelOrder(cancel.OrderHash, cancel.Reason, true, cancel.ToCancel)
+				err := handler.CancelOrder(cancel.OrderHash, cancel.Reason, false, cancel.ToCancel)
 				if err != nil {
 					logger.Errorf("cancel Order fail! err:%s", err)
 				}
@@ -98,7 +98,6 @@ func (s *Server) singleOrderCheck(order *model.Order, poolStorage *model.Liquidi
 	}
 
 	// close only check
-	// TODO: consider cancel partial
 	cancelAmount := CheckCloseOnly(account, order)
 	if !cancelAmount.IsZero() {
 		return &OrderCancel{
@@ -236,15 +235,8 @@ func (s *Server) checkUserPendingOrders(user string) []*OrderCancel {
 	for _, collateralMap := range orderMap {
 		walletBalance := collateralMap.WalletBalance
 		for _, v := range collateralMap.OrderMap {
-			// get account storage in each perp
-			account, err := s.chainCli.GetAccountStorage(s.ctx, conf.Conf.ReaderAddress, v.PerpetualIndex, v.LiquidityPoolAddress, user)
-			if account == nil || err != nil {
-				logger.Errorf("new order:GetAccountStorage err:%v", err)
-				return cancels
-			}
-
-			account.WalletBalance = walletBalance
-			cancelsInsufficientFunds, available := ComputeOrderAvailable(v.PoolStorage, v.PerpetualIndex, account, v.Orders)
+			v.Account.WalletBalance = walletBalance
+			cancelsInsufficientFunds, available := ComputeOrderAvailable(v.PoolStorage, v.PerpetualIndex, v.Account, v.Orders)
 			cancels = append(cancels, cancelsInsufficientFunds...)
 			walletBalance = available
 		}

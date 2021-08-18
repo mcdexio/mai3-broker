@@ -91,7 +91,7 @@ func (s *Executor) sendTransaction(tx *model.LaunchTransaction) error {
 		return nil
 	}
 	// allocate nonce
-	if err := s.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	if err := s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
 		tx.Nonce = model.Uint64(expNonce)
 		if err := dao.UpdateTx(tx); err != nil {
 			return errors.Wrap(err, "save nonce failed")
@@ -122,11 +122,11 @@ func (s *Executor) reset(tx *model.LaunchTransaction) error {
 			tx.Status = model.TxPending
 		}
 	}
-	err := s.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err := s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
 		if err := dao.UpdateTx(tx); err != nil {
 			return errors.Wrap(err, "update transaction failed")
 		}
-		err := s.match.UpdateOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), "", "", 0, 0)
+		err := s.match.UpdateOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), "", "", 0, 0, []*model.TradeSuccessEvent{}, []*model.TradeFailedEvent{})
 		return err
 	})
 
@@ -166,7 +166,7 @@ func (s *Executor) prepare(tx *model.LaunchTransaction) error {
 }
 
 func (s *Executor) send(tx *model.LaunchTransaction) error {
-	return s.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	return s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
 		prevHash := tx.TransactionHash
 		err := s.prepare(tx)
 		if err != nil {

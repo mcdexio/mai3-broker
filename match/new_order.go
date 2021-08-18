@@ -1,7 +1,6 @@
 package match
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/mcdexio/mai3-broker/common/mai3"
@@ -111,9 +110,9 @@ func (m *match) NewOrder(order *model.Order) string {
 		gasPrice := m.gasMonitor.GasPriceInWei()
 		gasReward := gasPrice.Mul(decimal.NewFromInt(order.GasFeeLimit))
 		// gasReward := utils.ToWad(decimal.NewFromFloat(0.0001))
-		ordersGasReword := gasReward.Mul(decimal.NewFromInt(int64(len(activeOrders) + 1)))
-		logger.Infof("gasPrice:%s brokerFeeLimit:%s gasBalance:%s gasReward:%s ordersGasReword:%s", gasPrice, utils.ToGwei(decimal.NewFromInt(order.BrokerFeeLimit)), gasBalance, gasReward, ordersGasReword)
-		if gasBalance.LessThan(ordersGasReword) {
+		ordersGasReward := gasReward.Mul(decimal.NewFromInt(int64(len(activeOrders) + 1)))
+		logger.Infof("gasPrice:%s brokerFeeLimit:%s gasBalance:%s gasReward:%s ordersGasReword:%s", gasPrice, utils.ToGwei(decimal.NewFromInt(order.BrokerFeeLimit)), gasBalance, gasReward, ordersGasReward)
+		if gasBalance.LessThan(ordersGasReward) {
 			return model.MatchGasNotEnoughErrorID
 		}
 
@@ -135,7 +134,7 @@ func (m *match) NewOrder(order *model.Order) string {
 			a = account
 		} else {
 			a, err = m.chainCli.GetAccountStorage(m.ctx, conf.Conf.ReaderAddress, v.PerpetualIndex, v.LiquidityPoolAddress, order.TraderAddress)
-			if account == nil || err != nil {
+			if a == nil || err != nil {
 				logger.Errorf("new order:GetAccountStorage err:%v", err)
 				return model.MatchInternalErrorID
 			}
@@ -151,7 +150,7 @@ func (m *match) NewOrder(order *model.Order) string {
 	}
 
 	// create order and insert to db and orderbook
-	err = m.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err = m.dao.Transaction(m.ctx, false /* readonly */, func(dao dao.DAO) error {
 		if err := dao.CreateOrder(order); err != nil {
 			return err
 		}

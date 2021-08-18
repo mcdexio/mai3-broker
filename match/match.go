@@ -32,6 +32,7 @@ type match struct {
 	chainCli   chain.ChainClient
 	gasMonitor *gasmonitor.GasMonitor
 	dao        dao.DAO
+	timerMu    sync.Mutex
 	timers     map[string]*time.Timer
 	trgr       chan interface{}
 }
@@ -116,7 +117,7 @@ func (m *match) matchOrders() {
 		BrokerAddress:        conf.Conf.BrokerAddress,
 	}
 	ordersForNotify := make([]*model.Order, 0)
-	err = m.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err = m.dao.Transaction(m.ctx, false /* readonly */, func(dao dao.DAO) error {
 		for _, item := range matchItems {
 			order, err := dao.GetOrder(item.Order.ID)
 			if err != nil {
@@ -146,13 +147,17 @@ func (m *match) matchOrders() {
 			if err := dao.UpdateOrder(order); err != nil {
 				return fmt.Errorf("order[%s] update failed error:%w", order.OrderHash, err)
 			}
-			if err := m.orderbook.ChangeOrder(item.Order, item.MatchedAmount.Add(item.OrderTotalCancel).Neg()); err != nil {
-				return fmt.Errorf("order[%s] orderbook ChangeOrder failed error:%w", order.OrderHash, err)
-			}
 			ordersForNotify = append(ordersForNotify, order)
 		}
 		if err := dao.CreateMatchTransaction(matchTransaction); err != nil {
 			return fmt.Errorf("matchTransaction create failed error:%w", err)
+		}
+
+		// update memory order after all db operations success
+		for _, item := range matchItems {
+			if err := m.orderbook.ChangeOrder(item.Order, item.MatchedAmount.Add(item.OrderTotalCancel).Neg()); err != nil {
+				return fmt.Errorf("order[%s] orderbook ChangeOrder failed error:%w", item.Order.ID, err)
+			}
 		}
 		return nil
 	})

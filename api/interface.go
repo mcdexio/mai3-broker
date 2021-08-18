@@ -39,7 +39,7 @@ type (
 		V                    string `json:"v" validate:"required"`
 		SignType             string `json:"signType" validate:"required"`
 		IsCloseOnly          bool   `json:"isCloseOnly"`
-		ChainID              int64  `json:"chainID" valiadte:"required"`
+		ChainID              int64  `json:"chainID" validate:"required"`
 	}
 
 	PlaceOrderResp struct {

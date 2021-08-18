@@ -113,7 +113,7 @@ func (s *Server) NewOrder(order *model.Order) string {
 func (s *Server) CancelOrder(poolAddress string, perpetualIndex int64, orderHash string) error {
 	handler := s.getMatchHandler(poolAddress, perpetualIndex)
 	if handler == nil {
-		return fmt.Errorf("CancelOrder error: perpetual[%s-%d] is not open.", poolAddress, perpetualIndex)
+		return fmt.Errorf("CancelOrder error: perpetual[%s-%d] is not open", poolAddress, perpetualIndex)
 	}
 	return handler.CancelOrder(orderHash, model.CancelReasonUserCancel, true, decimal.Zero)
 }
@@ -121,7 +121,7 @@ func (s *Server) CancelOrder(poolAddress string, perpetualIndex int64, orderHash
 func (s *Server) ClosePerpetual(poolAddress string, perpIndex int64) error {
 	handler := s.getMatchHandler(poolAddress, perpIndex)
 	if handler == nil {
-		return fmt.Errorf("ClosePerpetual error: perpetual[%s-%d] is not open.", poolAddress, perpIndex)
+		return fmt.Errorf("ClosePerpetual error: perpetual[%s-%d] is not open", poolAddress, perpIndex)
 	}
 	perpetual, err := s.dao.GetPerpetualByPoolAddressAndIndex(poolAddress, perpIndex, true)
 	if err != nil {
@@ -136,29 +136,40 @@ func (s *Server) ClosePerpetual(poolAddress string, perpIndex int64) error {
 	return s.deleteMatchHandler(poolAddress, perpIndex)
 }
 
-func (s *Server) UpdateOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string, blockNumber, blockTime uint64) error {
+func (s *Server) UpdateOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string,
+	blockNumber, blockTime uint64, successEvents []*model.TradeSuccessEvent, failedEvents []*model.TradeFailedEvent) error {
 	matchTx, err := s.dao.GetMatchTransaction(txID)
 	if err != nil {
 		return err
 	}
 	handler := s.getMatchHandler(matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)
 	if handler == nil {
-		return fmt.Errorf("UpdateOrdersStatus error: perpetual[%s-%d] is not open.", matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)
+		return fmt.Errorf("UpdateOrdersStatus error: perpetual[%s-%d] is not open", matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)
 	}
-	err = handler.UpdateOrdersStatus(txID, status, transactionHash, blockHash, blockNumber, blockTime)
+	err = handler.UpdateOrdersStatus(txID, status, transactionHash, blockHash, blockNumber, blockTime, successEvents, failedEvents)
 	return err
 }
 
-func (s *Server) RollbackOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string, blockNumber, blockTime uint64) error {
+func (s *Server) SetPoolStorageDirty(txID string) {
+	matchTx, err := s.dao.GetMatchTransaction(txID)
+	if err != nil {
+		logger.Infof("get match transaction error:%s", err)
+		return
+	}
+	s.poolSyncer.SetPoolStorageDirty(matchTx.LiquidityPoolAddress)
+}
+
+func (s *Server) RollbackOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string,
+	blockNumber, blockTime uint64, successEvents []*model.TradeSuccessEvent, failedEvents []*model.TradeFailedEvent) error {
 	matchTx, err := s.dao.GetMatchTransaction(txID)
 	if err != nil {
 		return err
 	}
 	handler := s.getMatchHandler(matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)
 	if handler == nil {
-		return fmt.Errorf("RollBackOrdersStatus error: perpetual[%s-%d] is not open.", matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)
+		return fmt.Errorf("RollBackOrdersStatus error: perpetual[%s-%d] is not open", matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)
 	}
-	err = handler.RollbackOrdersStatus(txID, status, transactionHash, blockHash, blockNumber, blockTime)
+	err = handler.RollbackOrdersStatus(matchTx, status, transactionHash, blockHash, blockNumber, blockTime, successEvents, failedEvents)
 	return err
 }
 

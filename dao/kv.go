@@ -1,9 +1,8 @@
 package dao
 
 import (
-	"time"
-
 	"github.com/mcdexio/mai3-broker/common/model"
+	"time"
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"

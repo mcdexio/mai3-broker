@@ -12,12 +12,10 @@ type Config struct {
 	WebsocketHost string   `envconfig:"websocket_host"`
 	DataBaseURL   string   `envconfig:"database_url"`
 	JwtSecret     string   `envconfig:"jwt_secret"`
-	RPCHost       string   `envconfig:"rpc_host"`
 	ReaderAddress string   `envconfig:"reader_address"`
 	BrokerAddress string   `envconfig:"broker_address"`
 	WhiteList     []string `envconfig:"white_list"`
 	EnableMetrics bool     `envconfig:"enable_metrics"`
-	MetricsAddr   string   `envconfig:"metrics_addr"`
 	MaxOrderNum   int      `envconfig:"max_order_num"`
 
 	PoolSyncerInterval      time.Duration `envconfig:"pool_syncer_interval"`
@@ -27,6 +25,7 @@ type Config struct {
 	ExecutorInterval        time.Duration `envconfig:"executor_interval"`
 	SyncerInterval          time.Duration `envconfig:"syncer_interval"`
 	LauncherMonitorInterval time.Duration `envconfig:"launcher_monitor_interval"`
+	UnmatureDuration        time.Duration `envconfig:"unmature_duration"`
 
 	GasPrice      uint64 `envconfig:"gas_price"`
 	GasLimit      uint64 `envconfig:"gas_limit"`
@@ -34,14 +33,13 @@ type Config struct {
 	GasArbAddress string `envconfig:"gas_arb_address"`
 	GasEnable     bool   `envconfig:"gas_enable"`
 
-	ChainType        string            `envconfig:"chain_type"`
-	ChainID          int64             `envconfig:"chain_id"`
-	RetryTimes       int               `envconfig:"retry_times"`
-	ChainTimeout     time.Duration     `envconfig:"chain_timeout"`
-	ProvidersURL     []string          `envconfig:"providers_url"`
-	Headers          map[string]string `envconfig:"headers"`
-	Password         string            `envconfig:"password"`
-	MatureBlockCount uint64            `envconfig:"mature_block_count"`
+	ChainType    string            `envconfig:"chain_type"`
+	ChainID      int64             `envconfig:"chain_id"`
+	RetryTimes   int               `envconfig:"retry_times"`
+	ChainTimeout time.Duration     `envconfig:"chain_timeout"`
+	ProvidersURL []string          `envconfig:"providers_url"`
+	Headers      map[string]string `envconfig:"headers"`
+	Password     string            `envconfig:"password"`
 
 	SubgraphURL string `envconfig:"subgraph_url"`
 }

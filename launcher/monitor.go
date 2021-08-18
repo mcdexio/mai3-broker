@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"time"
 
 	"github.com/mcdexio/mai3-broker/common/chain"
 	"github.com/mcdexio/mai3-broker/common/model"
@@ -40,19 +41,14 @@ func (s *Monitor) Run() error {
 }
 
 func (s *Monitor) syncUnmatureTransaction() {
-	blockNumber, err := s.chainCli.GetLatestBlockNumber()
-	if err != nil {
-		logger.Infof("GetLatestBlockNumber error:%s", err)
-		return
-	}
-	begin := blockNumber - conf.Conf.MatureBlockCount
-	s.updateUnmatureTransactionStatus(&begin)
+	s.checkUnmatureTransactionStatus()
 }
 
-func (s *Monitor) updateUnmatureTransactionStatus(blockNumber *uint64) {
+func (s *Monitor) checkUnmatureTransactionStatus() {
+	unmatureTime := time.Now().UTC().Add(-conf.Conf.UnmatureDuration)
 	// get unmature confirmed transaction
-	logger.Debugf("check unmature transaction blockNumber > %d", *blockNumber)
-	txs, err := s.dao.GetTxsByBlock(blockNumber, nil, model.TxSuccess, model.TxFailed)
+	logger.Debugf("check unmature transaction commit_time after %s", unmatureTime)
+	txs, err := s.dao.GetTxsByTime(unmatureTime, model.TxSuccess, model.TxFailed)
 	if dao.IsRecordNotFound(err) || len(txs) == 0 {
 		return
 	}
@@ -69,40 +65,52 @@ func (s *Monitor) updateUnmatureTransactionStatus(blockNumber *uint64) {
 
 		receipt, err := s.chainCli.WaitTransactionReceipt(*tx.TransactionHash)
 		if s.chainCli.IsNotFoundError(err) {
+			// transaction hash not found, rollback all success orders
 			if tx.Status == model.TxSuccess {
-				tx.Status = model.TxFailed
-				err = s.match.RollbackOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime)
+				err = s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
+					tx.Status = model.TxFailed
+					if err = dao.UpdateTx(tx); err != nil {
+						return errors.Wrap(err, "fail to update transaction status")
+					}
+					err = s.match.RollbackOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime, []*model.TradeSuccessEvent{}, []*model.TradeFailedEvent{})
+					return err
+				})
 				if err != nil {
-					logger.Warnf("transactionHash:%s not found, RollbackOrdersStatus fail txID: %s, err:%s", *tx.TransactionHash, tx.TxID, err)
-					continue
+					logger.Errorf("rollback transaction failed! txID:%s, err:%s", tx.TxID, err)
+				}
+				continue
+			}
+		}
+
+		if err != nil || receipt == nil {
+			logger.Errorf("checkUnmatureTransactionStatus WaitTransactionReceipt error: %s", err)
+			continue
+		}
+
+		successEvents, failedEvents := s.chainCli.ParseLogs(conf.Conf.BrokerAddress, receipt.Logs)
+		// if transaction success, there is one event at least
+		if receipt.Status == model.TxSuccess && len(successEvents) == 0 && len(failedEvents) == 0 {
+			logger.Errorf("Get Trade Event failed, neither success or failed: tx:%s, blocknumber:%d", tx.TxID, receipt.BlockNumber)
+			continue
+		}
+
+		err = s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
+			if *tx.BlockNumber != receipt.BlockNumber || *tx.BlockHash != receipt.BlockHash || tx.Status != receipt.Status {
+				tx.BlockNumber = &receipt.BlockNumber
+				tx.BlockHash = &receipt.BlockHash
+				tx.BlockTime = &receipt.BlockTime
+				tx.Status = receipt.Status
+				tx.GasUsed = &receipt.GasUsed
+				if err = dao.UpdateTx(tx); err != nil {
+					return errors.Wrap(err, "fail to update transaction status")
 				}
 			}
-		}
-		if err != nil || receipt == nil {
-			logger.Errorf("WaitTransactionReceipt error: %s", err)
-			continue
-		}
 
-		// check blockNumber blockHash ?
-		if tx.Status == receipt.Status {
-			continue
-		}
-		err = s.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
-			tx.BlockNumber = &receipt.BlockNumber
-			tx.BlockHash = &receipt.BlockHash
-			tx.BlockTime = &receipt.BlockTime
-			tx.Status = receipt.Status
-			tx.GasUsed = &receipt.GasUsed
-			if err = dao.UpdateTx(tx); err != nil {
-				return errors.Wrap(err, "fail to update transaction status")
-			}
-
-			err = s.match.RollbackOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime)
+			err = s.match.RollbackOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime, successEvents, failedEvents)
 			return err
 		})
 		if err != nil {
 			logger.Warnf("fail to check status: %s", err)
-			return
 		}
 	}
 }

@@ -1,8 +1,10 @@
 package model
 
 import (
-	"github.com/shopspring/decimal"
 	"time"
+
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/shopspring/decimal"
 )
 
 type BlockHeader struct {
@@ -18,6 +20,7 @@ type Receipt struct {
 	GasUsed     uint64
 	Status      LaunchTransactionStatus
 	BlockTime   uint64
+	Logs        []*ethtypes.Log
 }
 
 type TradeSuccessEvent struct {

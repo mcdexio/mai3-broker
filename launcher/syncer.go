@@ -79,6 +79,10 @@ func (s *Syncer) updateStatusByUser(user string) {
 
 		receipt, err := s.chainCli.WaitTransactionReceipt(*tx.TransactionHash)
 		if s.chainCli.IsNotFoundError(err) {
+			// this case is to handle accelarate
+			if next := i + 1; next < len(txs) && *tx.Nonce == *txs[next].Nonce {
+				continue
+			}
 			err = s.resetTransaction(tx)
 			if err != nil {
 				logger.Errorf("syncer: resetTransaction error: %s", err)
@@ -89,7 +93,18 @@ func (s *Syncer) updateStatusByUser(user string) {
 			logger.Errorf("syncer: WaitTransactionReceipt error: %s", err)
 			continue
 		}
-		err = s.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+
+		successEvents, failedEvents := s.chainCli.ParseLogs(conf.Conf.BrokerAddress, receipt.Logs)
+		// if transaction success, there is one event at least
+		if receipt.Status == model.TxSuccess && len(successEvents) == 0 && len(failedEvents) == 0 {
+			logger.Errorf("Get Trade Event failed, neither success or failed: tx:%s, blocknumber:%d", tx.TxID, receipt.BlockNumber)
+			continue
+		}
+
+		// set this pool storage dirty in match pool storage cache force to update it
+		s.match.SetPoolStorageDirty(tx.TxID)
+
+		err = s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
 			tx.BlockNumber = &receipt.BlockNumber
 			tx.BlockHash = &receipt.BlockHash
 			tx.BlockTime = &receipt.BlockTime
@@ -110,16 +125,13 @@ func (s *Syncer) updateStatusByUser(user string) {
 				}
 			}
 
-			err = s.match.UpdateOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime)
+			err = s.match.UpdateOrdersStatus(tx.TxID, tx.Status.TransactionStatus(), *tx.TransactionHash, *tx.BlockHash, *tx.BlockNumber, *tx.BlockTime, successEvents, failedEvents)
 			return err
 		})
-		// this case is to handle accelarate
-		if next := i + 1; next < len(txs) && *tx.Nonce == *txs[next].Nonce {
-			continue
-		}
+
 		if err != nil {
 			logger.Warnf("fail to check status: %s", err)
-			return
+			continue
 		}
 		txConfirmDuration.WithLabelValues(tx.FromAddress).Set(float64(time.Since(tx.CommitTime).Milliseconds()))
 		txPendingDuration.WithLabelValues(tx.FromAddress).Set(0)
@@ -127,7 +139,7 @@ func (s *Syncer) updateStatusByUser(user string) {
 }
 
 func (s *Syncer) resetTransaction(tx *model.LaunchTransaction) error {
-	err := s.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err := s.dao.Transaction(s.ctx, false /* readonly */, func(dao dao.DAO) error {
 		tx.Nonce = nil
 		tx.TransactionHash = nil
 		tx.Status = model.TxInitial

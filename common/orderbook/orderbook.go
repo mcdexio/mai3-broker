@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/cevaris/ordered_map"
 	"github.com/mcdexio/mai3-broker/common/mai3/utils"
@@ -123,9 +122,6 @@ type Orderbook struct {
 	askPrices map[string]interface{}
 
 	lock sync.RWMutex
-
-	Sequence  uint64
-	UpdatedAt time.Time
 }
 
 // NewOrderbook return a new book
@@ -171,8 +167,6 @@ func (book *Orderbook) InsertOrder(order *MemoryOrder) error {
 	} else {
 		book.bidPrices[order.Price.String()] = nil
 	}
-	book.Sequence++
-	book.UpdatedAt = time.Now().UTC()
 
 	return nil
 }
@@ -217,9 +211,6 @@ func (book *Orderbook) RemoveOrder(order *MemoryOrder) error {
 		}
 	}
 
-	book.Sequence++
-	book.UpdatedAt = time.Now().UTC()
-
 	return nil
 }
 
@@ -258,9 +249,6 @@ func (book *Orderbook) ChangeOrder(order *MemoryOrder, changeAmount decimal.Deci
 			delete(book.bidPrices, order.Price.String())
 		}
 	}
-
-	book.Sequence++
-	book.UpdatedAt = time.Now().UTC()
 
 	return nil
 }

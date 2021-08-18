@@ -2,11 +2,10 @@ package websocket
 
 import (
 	"fmt"
-	"strings"
-	"sync"
-
 	"github.com/mcdexio/mai3-broker/common/message"
 	logger "github.com/sirupsen/logrus"
+	"strings"
+	"sync"
 )
 
 // Channel is a basic type implemented IChannel

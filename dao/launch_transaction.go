@@ -17,7 +17,7 @@ type LaunchTransactionDAO interface {
 	GetTxByID(txID string) (*model.LaunchTransaction, error)
 	GetTxByHash(txHash string) (*model.LaunchTransaction, error)
 	GetTxsByNonce(user string, nonce *uint64, status ...model.LaunchTransactionStatus) ([]*model.LaunchTransaction, error)
-	GetTxsByBlock(begin *uint64, end *uint64, status ...model.LaunchTransactionStatus) ([]*model.LaunchTransaction, error)
+	GetTxsByTime(unmatureTime time.Time, status ...model.LaunchTransactionStatus) ([]*model.LaunchTransaction, error)
 	GetUsersWithStatus(status ...model.LaunchTransactionStatus) ([]string, error)
 
 	CreateTx(tx *model.LaunchTransaction) error
@@ -50,8 +50,8 @@ func (t *launchTransactionDAO) FirstTxByUser(
 	tx := new(model.LaunchTransaction)
 	err := t.statusFilter(status).
 		Where("from_address = ?", addr).
-		Order("nonce").
-		Find(tx).Error
+		Order("id", true).
+		First(tx).Error
 	if err != nil {
 		return nil, fmt.Errorf("check pending transactions failed: %w", err)
 	}
@@ -111,16 +111,10 @@ func (t *launchTransactionDAO) GetTxsByNonce(addr string, nonce *uint64, status 
 	return txs, nil
 }
 
-func (t *launchTransactionDAO) GetTxsByBlock(begin *uint64, end *uint64, status ...model.LaunchTransactionStatus) ([]*model.LaunchTransaction, error) {
-
+func (t *launchTransactionDAO) GetTxsByTime(unmatureTime time.Time, status ...model.LaunchTransactionStatus) ([]*model.LaunchTransaction, error) {
 	var txs []*model.LaunchTransaction
 	db := t.statusFilter(status)
-	if begin != nil {
-		db = db.Where("block_number >= ?", *begin)
-	}
-	if end != nil {
-		db = db.Where("block_number <= ?", *end)
-	}
+	db = db.Where("commit_time >= ?", unmatureTime).Order("id", true)
 	if err := db.Find(&txs).Error; err != nil {
 		return nil, errors.Wrap(err, "fail to find transaction by block")
 	}

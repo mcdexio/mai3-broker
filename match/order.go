@@ -1,6 +1,7 @@
 package match
 
 import (
+	"errors"
 	"sort"
 	"time"
 
@@ -352,67 +353,19 @@ func (m *match) matchOneSide(poolStorage *model.LiquidityPoolStorage, tradePrice
 		account.WalletBalance = decimal.Min(balance, allowance)
 
 		if maxTradeAmount.Abs().GreaterThanOrEqual(order.Amount.Abs()) {
-			matchItem := &MatchItem{
-				Order:              order,
-				OrderCancelAmounts: make([]decimal.Decimal, 0),
-				OrderCancelReasons: make([]model.CancelReasonType, 0),
-				OrderTotalCancel:   decimal.Zero,
-				MatchedAmount:      order.Amount,
+			matchItem, err := m.getMatchItem(order.Amount, order, isBuy, account, poolStorage)
+			if err != nil {
+				logger.Errorf("matchOneSide: getMatchItem err:%s", err)
+				continue
 			}
-			logger.Infof("matchedAmount: %s orderAmount:%s", order.Amount, order.Amount)
-			_, tradeIsSafe, _, err := mai3.ComputeAMMTrade(poolStorage, m.perpetual.PerpetualIndex, account, order.Amount)
-			if err != nil || !tradeIsSafe {
-				logger.Infof("matchOneSide: ComputeAMMTrade fail or unsafe after trade. err:%s", err)
-				// unsafe after trade, try to get max trade amount
-				amount := mai3.ComputeAMMMaxTradeAmount(poolStorage, m.perpetual.PerpetualIndex, account, order.Amount, isBuy)
-				if amount.IsZero() || amount.Abs().LessThan(order.MinTradeAmount) {
-					continue
-				}
-				_, tradeIsSafe, _, err := mai3.ComputeAMMTrade(poolStorage, m.perpetual.PerpetualIndex, account, amount)
-				if err != nil || !tradeIsSafe {
-					continue
-				}
-				matchItem.MatchedAmount = amount
-				// check remain amount bigger than min trade amount
-				if order.Amount.Sub(amount).Abs().LessThan(order.MinTradeAmount.Abs()) {
-					logger.Infof("OrderCancelAmount: %s", order.Amount.Sub(amount))
-					matchItem.OrderCancelAmounts = append(matchItem.OrderCancelAmounts, order.Amount.Sub(amount))
-					matchItem.OrderCancelReasons = append(matchItem.OrderCancelReasons, model.CancelReasonRemainTooSmall)
-					matchItem.OrderTotalCancel = order.Amount.Sub(amount)
-				}
-			}
-
 			result = append(result, matchItem)
 			maxTradeAmount = maxTradeAmount.Sub(order.Amount)
 		} else {
 			matchedAmount := maxTradeAmount.Mul(TradeAmountRelaxFactor).Round(mai3.DECIMALS)
-			matchItem := &MatchItem{
-				Order:              order,
-				OrderCancelAmounts: make([]decimal.Decimal, 0),
-				OrderCancelReasons: make([]model.CancelReasonType, 0),
-				OrderTotalCancel:   decimal.Zero,
-				MatchedAmount:      matchedAmount,
-			}
-			logger.Infof("matchedAmount: %s orderAmount:%s", matchedAmount, order.Amount)
-			_, tradeIsSafe, _, err := mai3.ComputeAMMTrade(poolStorage, m.perpetual.PerpetualIndex, account, matchedAmount)
-			if err != nil || !tradeIsSafe {
-				logger.Infof("matchOneSide: ComputeAMMTrade fail or unsafe after trade. err:%v", err)
-				// unsafe after trade, try to get max trade amount
-				amount := mai3.ComputeAMMMaxTradeAmount(poolStorage, m.perpetual.PerpetualIndex, account, order.Amount, isBuy)
-				if amount.IsZero() || amount.Abs().LessThan(order.MinTradeAmount) {
-					continue
-				}
-				_, tradeIsSafe, _, err := mai3.ComputeAMMTrade(poolStorage, m.perpetual.PerpetualIndex, account, amount)
-				if err != nil || !tradeIsSafe {
-					continue
-				}
-				matchItem.MatchedAmount = amount
-			}
-			if order.Amount.Sub(matchedAmount).Abs().LessThan(order.MinTradeAmount.Abs()) {
-				logger.Infof("OrderCancelAmount: %s", order.Amount.Sub(matchedAmount))
-				matchItem.OrderCancelAmounts = append(matchItem.OrderCancelAmounts, order.Amount.Sub(matchedAmount))
-				matchItem.OrderCancelReasons = append(matchItem.OrderCancelReasons, model.CancelReasonRemainTooSmall)
-				matchItem.OrderTotalCancel = order.Amount.Sub(matchedAmount)
+			matchItem, err := m.getMatchItem(matchedAmount, order, isBuy, account, poolStorage)
+			if err != nil {
+				logger.Errorf("matchOneSide: getMatchItem err:%s", err)
+				continue
 			}
 			result = append(result, matchItem)
 			break
@@ -420,4 +373,39 @@ func (m *match) matchOneSide(poolStorage *model.LiquidityPoolStorage, tradePrice
 	}
 
 	return result, true
+}
+
+func (m *match) getMatchItem(matchedAmount decimal.Decimal, order *orderbook.MemoryOrder, isBuy bool, account *model.AccountStorage, poolStorage *model.LiquidityPoolStorage) (*MatchItem, error) {
+	logger.Infof("matchedAmount: %s orderAmount:%s", matchedAmount, order.Amount)
+	matchItem := &MatchItem{
+		Order:              order,
+		OrderCancelAmounts: make([]decimal.Decimal, 0),
+		OrderCancelReasons: make([]model.CancelReasonType, 0),
+		OrderTotalCancel:   decimal.Zero,
+		MatchedAmount:      matchedAmount,
+	}
+	_, tradeIsSafe, _, err := mai3.ComputeAMMTrade(poolStorage, m.perpetual.PerpetualIndex, account, matchedAmount)
+	if err != nil || !tradeIsSafe {
+		logger.Infof("matchOneSide: ComputeAMMTrade fail or unsafe after trade. err:%s", err)
+		// unsafe after trade, try to get max trade amount
+		amount := mai3.ComputeAMMMaxTradeAmount(poolStorage, m.perpetual.PerpetualIndex, account, matchedAmount, isBuy)
+		if amount.IsZero() || amount.Abs().LessThan(order.MinTradeAmount) {
+			return nil, errors.New("trade amount is zero")
+		}
+		_, tradeIsSafe, _, err := mai3.ComputeAMMTrade(poolStorage, m.perpetual.PerpetualIndex, account, amount)
+		if err != nil || !tradeIsSafe {
+			return nil, errors.New("trader if unsafe after trade")
+		}
+		matchItem.MatchedAmount = amount
+	}
+
+	// check remain amount bigger than min trade amount
+	remain := order.Amount.Sub(matchItem.MatchedAmount)
+	if !remain.IsZero() && remain.Abs().LessThan(order.MinTradeAmount.Abs()) {
+		logger.Infof("OrderCancelAmount: %s", remain)
+		matchItem.OrderCancelAmounts = append(matchItem.OrderCancelAmounts, remain)
+		matchItem.OrderCancelReasons = append(matchItem.OrderCancelReasons, model.CancelReasonRemainTooSmall)
+		matchItem.OrderTotalCancel = remain
+	}
+	return matchItem, nil
 }

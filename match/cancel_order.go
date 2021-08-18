@@ -1,8 +1,6 @@
 package match
 
 import (
-	"context"
-
 	"github.com/mcdexio/mai3-broker/common/message"
 	"github.com/mcdexio/mai3-broker/common/model"
 	"github.com/mcdexio/mai3-broker/dao"
@@ -20,7 +18,7 @@ func (m *match) cancelOrderWithoutLock(orderHash string, reason model.CancelReas
 	var order *model.Order
 	cancelBookAmount := cancelAmount
 	cancelDBAmount := cancelAmount
-	err := m.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err := m.dao.Transaction(m.ctx, false /* readonly */, func(dao dao.DAO) error {
 		var err error
 		order, err = dao.GetOrder(orderHash)
 		if err != nil {

@@ -77,7 +77,6 @@ func (t *matchTransactionDAO) UpdateMatchTransaction(transaction *model.MatchTra
 		return fmt.Errorf("CreateMatchTransaction:%w", err)
 	}
 	transaction.MatchJson = string(jsonData)
-
 	if err = t.db.Save(transaction).Error; err != nil {
 		return fmt.Errorf("UpdateMatchTransaction:%w", err)
 	}

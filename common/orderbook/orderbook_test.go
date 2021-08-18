@@ -1,9 +1,8 @@
 package orderbook
 
 import (
-	"testing"
-
 	"github.com/mcdexio/mai3-broker/common/model"
+	"testing"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"

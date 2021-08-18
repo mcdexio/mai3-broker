@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	ethBind "github.com/ethereum/go-ethereum/accounts/abi/bind"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/shopspring/decimal"
 
 	"github.com/mcdexio/mai3-broker/common/chain/ethereum/broker"
@@ -111,6 +112,49 @@ func (c *Client) FilterTradeFailed(ctx context.Context, brokerAddress string, st
 	}
 
 	return rsp, nil
+}
+
+func (c *Client) ParseLogs(brokerAddress string, logs []*ethtypes.Log) ([]*model.TradeSuccessEvent, []*model.TradeFailedEvent) {
+	successEvents := make([]*model.TradeSuccessEvent, 0)
+	failedEvents := make([]*model.TradeFailedEvent, 0)
+	address, err := HexToAddress(brokerAddress)
+	if err != nil {
+		return successEvents, failedEvents
+	}
+	contract, err := broker.NewBroker(address, c.GetEthClient())
+	if err != nil {
+		return successEvents, failedEvents
+	}
+	for _, log := range logs {
+		if event, err := contract.ParseTradeSuccess(*log); err == nil {
+			success := &model.TradeSuccessEvent{
+				PerpetualAddress: strings.ToLower(event.Raw.Address.Hex()),
+				TransactionSeq:   int(event.Raw.TxIndex),
+				TransactionHash:  strings.ToLower(event.Raw.TxHash.Hex()),
+				BlockNumber:      int64(event.Raw.BlockNumber),
+				TraderAddress:    strings.ToLower(event.Order.Trader.Hex()),
+				OrderHash:        utils.Bytes2HexP(event.OrderHash[:]),
+				Amount:           decimal.NewFromBigInt(event.Amount, -mai3.DECIMALS),
+				Gas:              decimal.NewFromBigInt(event.GasReward, -mai3.DECIMALS),
+			}
+			successEvents = append(successEvents, success)
+		}
+
+		if event, err := contract.ParseTradeFailed(*log); err == nil {
+			failed := &model.TradeFailedEvent{
+				PerpetualAddress: strings.ToLower(event.Raw.Address.Hex()),
+				TransactionSeq:   int(event.Raw.TxIndex),
+				TransactionHash:  strings.ToLower(event.Raw.TxHash.Hex()),
+				BlockNumber:      int64(event.Raw.BlockNumber),
+				TraderAddress:    strings.ToLower(event.Order.Trader.Hex()),
+				OrderHash:        utils.Bytes2HexP(event.OrderHash[:]),
+				Amount:           decimal.NewFromBigInt(event.Amount, -mai3.DECIMALS),
+				Reason:           event.Reason,
+			}
+			failedEvents = append(failedEvents, failed)
+		}
+	}
+	return successEvents, failedEvents
 }
 
 func (c *Client) GetGasBalance(ctx context.Context, brokerAddress string, address string) (decimal.Decimal, error) {

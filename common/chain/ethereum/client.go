@@ -243,8 +243,11 @@ func (c *Client) WaitTransactionReceipt(txHash string) (*model.Receipt, error) {
 	for i := 0; i < 10; i++ {
 		res, err = c.call("TransactionReceipt", ethCommon.HexToHash(txHash))
 		if errors.Is(err, ethereum.NotFound) {
-			time.Sleep(time.Second * 5)
+			sleep := time.Millisecond * 300 * time.Duration(i+1)
+			time.Sleep(sleep)
 			continue
+		} else {
+			break
 		}
 	}
 
@@ -267,6 +270,7 @@ func (c *Client) WaitTransactionReceipt(txHash string) (*model.Receipt, error) {
 		BlockHash:   rcpt.BlockHash.Hex(),
 		GasUsed:     rcpt.GasUsed,
 		BlockTime:   block.(*ethtypes.Block).Time(),
+		Logs:        rcpt.Logs,
 	}
 	if rcpt.Status == ethtypes.ReceiptStatusSuccessful {
 		receipt.Status = model.TxSuccess

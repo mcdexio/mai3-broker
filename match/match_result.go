@@ -1,13 +1,11 @@
 package match
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	"github.com/mcdexio/mai3-broker/common/message"
 	"github.com/mcdexio/mai3-broker/common/model"
-	"github.com/mcdexio/mai3-broker/conf"
 	"github.com/mcdexio/mai3-broker/dao"
 	"github.com/shopspring/decimal"
 	"gopkg.in/guregu/null.v3"
@@ -18,11 +16,12 @@ import (
 const TriggerPriceNotReach = "trigger price is not reached"
 const PriceExceedsLimit = "price exceeds limit"
 
-func (m *match) UpdateOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string, blockNumber, blockTime uint64) error {
+func (m *match) UpdateOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string,
+	blockNumber, blockTime uint64, successEvents []*model.TradeSuccessEvent, failedEvents []*model.TradeFailedEvent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ordersToNotify := make([]*model.Order, 0)
-	err := m.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err := m.dao.Transaction(m.ctx, false /* readonly */, func(dao dao.DAO) error {
 		// update match_transaction
 		matchTx, err := dao.GetMatchTransaction(txID)
 		if err != nil {
@@ -40,7 +39,7 @@ func (m *match) UpdateOrdersStatus(txID string, status model.TransactionStatus, 
 		mTxPendingDuration.WithLabelValues(fmt.Sprintf("%s-%d", matchTx.LiquidityPoolAddress, matchTx.PerpetualIndex)).Set(float64(time.Since(matchTx.CreatedAt).Milliseconds()))
 
 		// update orders
-		orders, err := m.updateOrdersByTradeEvent(dao, matchTx, blockNumber)
+		orders, err := m.updateOrdersByTradeEvent(dao, matchTx, successEvents, failedEvents)
 		if err != nil {
 			return err
 		}
@@ -70,33 +69,19 @@ func (m *match) UpdateOrdersStatus(txID string, status model.TransactionStatus, 
 	return err
 }
 
-func (m *match) updateOrdersByTradeEvent(dao dao.DAO, matchTx *model.MatchTransaction, blockNumber uint64) ([]*model.Order, error) {
+func (m *match) updateOrdersByTradeEvent(dao dao.DAO, matchTx *model.MatchTransaction, successEvents []*model.TradeSuccessEvent, failedEvents []*model.TradeFailedEvent) ([]*model.Order, error) {
 	ordersToNotify := make([]*model.Order, 0)
-	ctxTimeout, ctxTimeoutCancel := context.WithTimeout(m.ctx, conf.Conf.ChainTimeout)
-	defer ctxTimeoutCancel()
 	// orders trade success
 	orderSuccMap := make(map[string]decimal.Decimal)
-	// orders trade failed, need to be cancel
+	// orders trade failed, need to be canceled or rollbacked
 	orderFailMap := make(map[string]decimal.Decimal)
 
 	orderMatchMap := make(map[string]decimal.Decimal)
 	orderHashes := make([]string, 0)
 
 	if matchTx.Status == model.TransactionStatusSuccess {
-		tradeSuccess, err := m.chainCli.FilterTradeSuccess(ctxTimeout, matchTx.BrokerAddress, blockNumber, blockNumber)
-		if err != nil {
-			return ordersToNotify, err
-		}
-		TradeFailed, err := m.chainCli.FilterTradeFailed(ctxTimeout, matchTx.BrokerAddress, blockNumber, blockNumber)
-		if err != nil {
-			return ordersToNotify, err
-		}
-
-		for _, event := range tradeSuccess {
+		for _, event := range successEvents {
 			logger.Infof("Trade Success: %+v", event)
-			if event.TransactionHash != matchTx.TransactionHash.String {
-				continue
-			}
 			matchInfo := &model.MatchItem{
 				OrderHash: event.OrderHash,
 				Amount:    event.Amount,
@@ -105,11 +90,8 @@ func (m *match) updateOrdersByTradeEvent(dao dao.DAO, matchTx *model.MatchTransa
 			orderSuccMap[event.OrderHash] = event.Amount
 		}
 
-		for _, event := range TradeFailed {
+		for _, event := range failedEvents {
 			logger.Infof("Trade Failed: %+v", event)
-			if event.TransactionHash != matchTx.TransactionHash.String {
-				continue
-			}
 			// trigger price or price not match in contract, will rollback to orderbook
 			if event.Reason == TriggerPriceNotReach || event.Reason == PriceExceedsLimit {
 				continue
@@ -141,7 +123,7 @@ func (m *match) updateOrdersByTradeEvent(dao dao.DAO, matchTx *model.MatchTransa
 			if !amount.Equal(matchAmount) {
 				oldAmount := order.AvailableAmount
 				order.AvailableAmount = order.AvailableAmount.Add(matchAmount.Sub(amount))
-				if err := m.rollbackOrderbook(oldAmount, order.PendingAmount.Sub(amount), order); err != nil {
+				if err := m.rollbackOrderbook(oldAmount, matchAmount.Sub(amount), order); err != nil {
 					logger.Errorf("UpdateOrdersStatus:%s", err)
 					return ordersToNotify, err
 				}
@@ -168,7 +150,7 @@ func (m *match) updateOrdersByTradeEvent(dao dao.DAO, matchTx *model.MatchTransa
 				return ordersToNotify, err
 			}
 		} else {
-			// order not excute, reload order in orderbook
+			// order not execute, reload order in orderbook
 			matchAmount := orderMatchMap[order.OrderHash]
 			oldAmount := order.AvailableAmount
 			order.PendingAmount = order.PendingAmount.Sub(matchAmount)
@@ -209,40 +191,31 @@ func (m *match) rollbackOrderbook(oldAmount, delta decimal.Decimal, order *model
 	return fmt.Errorf("order %s not fund in orderbook", order.OrderHash)
 }
 
-func (m *match) RollbackOrdersStatus(txID string, status model.TransactionStatus, transactionHash, blockHash string, blockNumber, blockTime uint64) error {
+func (m *match) RollbackOrdersStatus(matchTx *model.MatchTransaction, status model.TransactionStatus, transactionHash, blockHash string,
+	blockNumber, blockTime uint64, successEvents []*model.TradeSuccessEvent, failedEvents []*model.TradeFailedEvent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	ordersToNotify := make([]*model.Order, 0)
-	err := m.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err := m.dao.Transaction(m.ctx, false /* readonly */, func(dao dao.DAO) error {
 		// update match_transaction
-		matchTx, err := dao.GetMatchTransaction(txID)
+		if matchTx.Status != status {
+			matchTx.TransactionHash = null.StringFrom(transactionHash)
+			matchTx.BlockHash = null.StringFrom(blockHash)
+			matchTx.BlockNumber = null.IntFrom(int64(blockNumber))
+			matchTx.ExecutedAt = null.TimeFrom(time.Unix(int64(blockTime), 0).UTC())
+			matchTx.Status = status
+		}
+
+		// transaction fail to success/ success but event changed, rollback orders by event
+		orders, err := m.rollbackOrdersByTradeEvent(dao, matchTx, successEvents, failedEvents)
 		if err != nil {
 			return err
 		}
-		matchTx.TransactionHash = null.StringFrom(transactionHash)
-		matchTx.BlockHash = null.StringFrom(blockHash)
-		matchTx.BlockNumber = null.IntFrom(int64(blockNumber))
-		matchTx.ExecutedAt = null.TimeFrom(time.Unix(int64(blockTime), 0).UTC())
-
-		if matchTx.Status == model.TransactionStatusSuccess && status == model.TransactionStatusFail {
-			orders, err := m.rollbackOrdersOnTransactionFail(dao, matchTx)
-			if err != nil {
-				return err
-			}
-			ordersToNotify = append(ordersToNotify, orders...)
-		} else if matchTx.Status == model.TransactionStatusFail && status == model.TransactionStatusSuccess {
-			orders, err := m.updateOrdersByTradeEvent(dao, matchTx, blockNumber)
-			if err != nil {
-				return err
-			}
-			ordersToNotify = append(ordersToNotify, orders...)
-		}
-		matchTx.Status = status
-		if err = dao.UpdateMatchTransaction(matchTx); err != nil {
+		ordersToNotify = append(ordersToNotify, orders...)
+		if err := dao.UpdateMatchTransaction(matchTx); err != nil {
 			return err
 		}
-
 		return nil
 	})
 
@@ -262,37 +235,224 @@ func (m *match) RollbackOrdersStatus(txID string, status model.TransactionStatus
 	return err
 }
 
-func (m *match) rollbackOrdersOnTransactionFail(dao dao.DAO, matchTx *model.MatchTransaction) ([]*model.Order, error) {
+func (m *match) rollbackOrdersByTradeEvent(dao dao.DAO, matchTx *model.MatchTransaction, successEvents []*model.TradeSuccessEvent, failedEvents []*model.TradeFailedEvent) ([]*model.Order, error) {
 	ordersToNotify := make([]*model.Order, 0)
-	orderRollbackMap := make(map[string]decimal.Decimal)
+
+	// success items before
+	orderSuccItemsBefore := make(map[string]decimal.Decimal)
+	// failed items before
+	orderFailItemsBefore := make(map[string]decimal.Decimal)
+
+	// orders trade success
+	orderSuccMap := make(map[string]decimal.Decimal)
+	// orders trade failed, need to be canceled
+	orderFailMap := make(map[string]decimal.Decimal)
+
+	orderMatchMap := make(map[string]decimal.Decimal)
 	orderHashes := make([]string, 0)
-	// success orders
+
 	for _, item := range matchTx.MatchResult.SuccItems {
-		orderRollbackMap[item.OrderHash] = item.Amount
+		orderSuccItemsBefore[item.OrderHash] = item.Amount
+	}
+
+	for _, item := range matchTx.MatchResult.FailedItems {
+		orderFailItemsBefore[item.OrderHash] = item.Amount
+	}
+
+	matchTx.MatchResult.SuccItems = []*model.MatchItem{}
+	matchTx.MatchResult.FailedItems = []*model.MatchItem{}
+
+	for _, event := range successEvents {
+		orderSuccMap[event.OrderHash] = event.Amount
+	}
+
+	for _, event := range failedEvents {
+		// trigger price or price not match in contract, will rollback to orderbook
+		if event.Reason == TriggerPriceNotReach || event.Reason == PriceExceedsLimit {
+			continue
+		}
+		orderFailMap[event.OrderHash] = event.Amount
+	}
+
+	for _, item := range matchTx.MatchResult.MatchItems {
+		orderMatchMap[item.OrderHash] = item.Amount
 		orderHashes = append(orderHashes, item.OrderHash)
 	}
 
 	orders, err := dao.GetOrderByHashs(orderHashes)
 	if err != nil {
-		logger.Errorf("rollbackOrdersOnTransactionFail:%v", err)
+		logger.Errorf("UpdateOrdersStatus:%s", err)
 		return ordersToNotify, err
 	}
 	for _, order := range orders {
-		amount := orderRollbackMap[order.OrderHash]
-		oldAmount := order.AvailableAmount
-		order.PendingAmount = order.ConfirmedAmount.Sub(amount)
-		order.AvailableAmount = order.AvailableAmount.Add(amount)
-		if err := dao.UpdateOrder(order); err != nil {
-			logger.Errorf("rollbackOrdersOnTransactionFail:%v", err)
-			return ordersToNotify, err
+		// TODO consider checking amount
+		if amount, ok := orderSuccItemsBefore[order.OrderHash]; ok {
+			if _, ok := orderSuccMap[order.OrderHash]; ok {
+				// order success
+				item := &model.MatchItem{
+					OrderHash: order.OrderHash,
+					Amount:    amount,
+				}
+				matchTx.MatchResult.SuccItems = append(matchTx.MatchResult.SuccItems, item)
+				continue
+			}
+
+			if _, ok := orderFailMap[order.OrderHash]; ok {
+				// order success to fail
+				order.ConfirmedAmount = order.ConfirmedAmount.Sub(amount)
+				order.CanceledAmount = order.CanceledAmount.Add(amount)
+				r := &model.OrderCancelReason{
+					Reason:          model.CancelReasonTransactionFail,
+					Amount:          amount,
+					TransactionHash: matchTx.TransactionHash.String,
+					CanceledAt:      matchTx.ExecutedAt.Time,
+				}
+				order.CancelReasons = append(order.CancelReasons, r)
+				if err := dao.UpdateOrder(order); err != nil {
+					logger.Errorf("UpdateOrdersStatus:%s", err)
+					return ordersToNotify, err
+				}
+				item := &model.MatchItem{
+					OrderHash: order.OrderHash,
+					Amount:    amount,
+				}
+				matchTx.MatchResult.FailedItems = append(matchTx.MatchResult.FailedItems, item)
+				continue
+			}
+
+			// order success to orderbook
+			oldAmount := order.AvailableAmount
+			order.ConfirmedAmount = order.ConfirmedAmount.Sub(amount)
+			order.AvailableAmount = order.AvailableAmount.Add(amount)
+			if err := dao.UpdateOrder(order); err != nil {
+				logger.Errorf("UpdateOrdersStatus:%s", err)
+				return ordersToNotify, err
+			}
+			if err := m.rollbackOrderbook(oldAmount, amount, order); err != nil {
+				logger.Errorf("UpdateOrdersStatus:%s", err)
+				return ordersToNotify, err
+			}
+			ordersToNotify = append(ordersToNotify, order)
+			continue
 		}
 
-		if err := m.rollbackOrderbook(oldAmount, amount, order); err != nil {
-			logger.Errorf("rollbackOrdersOnTransactionFail:%v", err)
-			return ordersToNotify, err
+		if amount, ok := orderFailItemsBefore[order.OrderHash]; ok {
+			if _, ok := orderSuccMap[order.OrderHash]; ok {
+				// order fail to success
+				order.ConfirmedAmount = order.ConfirmedAmount.Add(amount)
+				order.CanceledAmount = order.CanceledAmount.Sub(amount)
+				// cancel reason
+				reasons := make([]*model.OrderCancelReason, 0)
+				reasons = append(reasons, order.CancelReasons...)
+				order.CancelReasons = []*model.OrderCancelReason{}
+				for _, reason := range reasons {
+					if reason.TransactionHash == matchTx.TransactionHash.String {
+						continue
+					}
+					order.CancelReasons = append(order.CancelReasons, reason)
+				}
+				if err := dao.UpdateOrder(order); err != nil {
+					logger.Errorf("UpdateOrdersStatus:%s", err)
+					return ordersToNotify, err
+				}
+				item := &model.MatchItem{
+					OrderHash: order.OrderHash,
+					Amount:    amount,
+				}
+				matchTx.MatchResult.SuccItems = append(matchTx.MatchResult.SuccItems, item)
+				continue
+			}
+
+			if _, ok := orderFailMap[order.OrderHash]; ok {
+				// order fail
+				item := &model.MatchItem{
+					OrderHash: order.OrderHash,
+					Amount:    amount,
+				}
+				matchTx.MatchResult.FailedItems = append(matchTx.MatchResult.FailedItems, item)
+				continue
+			}
+
+			// order fail to orderbook
+			oldAmount := order.AvailableAmount
+			order.CanceledAmount = order.CanceledAmount.Sub(amount)
+			order.AvailableAmount = order.AvailableAmount.Add(amount)
+			// cancel reason
+			reasons := make([]*model.OrderCancelReason, 0)
+			reasons = append(reasons, order.CancelReasons...)
+			order.CancelReasons = []*model.OrderCancelReason{}
+			for _, reason := range reasons {
+				if reason.TransactionHash == matchTx.TransactionHash.String {
+					continue
+				}
+				order.CancelReasons = append(order.CancelReasons, reason)
+			}
+			if err := dao.UpdateOrder(order); err != nil {
+				logger.Errorf("UpdateOrdersStatus:%s", err)
+				return ordersToNotify, err
+			}
+			if err := m.rollbackOrderbook(oldAmount, amount, order); err != nil {
+				logger.Errorf("UpdateOrdersStatus:%s", err)
+				return ordersToNotify, err
+			}
+			ordersToNotify = append(ordersToNotify, order)
+			continue
 		}
-		ordersToNotify = append(ordersToNotify, order)
+
+		if amount, ok := orderSuccMap[order.OrderHash]; ok {
+			if order.AvailableAmount.Abs().GreaterThanOrEqual(amount.Abs()) {
+				// orderbook to success
+				oldAmount := order.AvailableAmount
+				order.ConfirmedAmount = order.ConfirmedAmount.Add(amount)
+				order.AvailableAmount = order.AvailableAmount.Sub(amount)
+				if err := dao.UpdateOrder(order); err != nil {
+					logger.Errorf("UpdateOrdersStatus:%s", err)
+					return ordersToNotify, err
+				}
+				if err := m.rollbackOrderbook(oldAmount, amount.Neg(), order); err != nil {
+					logger.Errorf("UpdateOrdersStatus:%s", err)
+					return ordersToNotify, err
+				}
+				item := &model.MatchItem{
+					OrderHash: order.OrderHash,
+					Amount:    amount,
+				}
+				matchTx.MatchResult.SuccItems = append(matchTx.MatchResult.SuccItems, item)
+				ordersToNotify = append(ordersToNotify, order)
+			}
+			continue
+		}
+
+		if amount, ok := orderFailMap[order.OrderHash]; ok {
+			if order.AvailableAmount.Abs().GreaterThanOrEqual(amount.Abs()) {
+				// orderbook to fail
+				oldAmount := order.AvailableAmount
+				order.CanceledAmount = order.CanceledAmount.Add(amount)
+				order.AvailableAmount = order.AvailableAmount.Sub(amount)
+				r := &model.OrderCancelReason{
+					Reason:          model.CancelReasonTransactionFail,
+					Amount:          amount,
+					TransactionHash: matchTx.TransactionHash.String,
+					CanceledAt:      matchTx.ExecutedAt.Time,
+				}
+				order.CancelReasons = append(order.CancelReasons, r)
+				if err := dao.UpdateOrder(order); err != nil {
+					logger.Errorf("UpdateOrdersStatus:%s", err)
+					return ordersToNotify, err
+				}
+				if err := m.rollbackOrderbook(oldAmount, amount.Neg(), order); err != nil {
+					logger.Errorf("UpdateOrdersStatus:%s", err)
+					return ordersToNotify, err
+				}
+				item := &model.MatchItem{
+					OrderHash: order.OrderHash,
+					Amount:    amount,
+				}
+				matchTx.MatchResult.FailedItems = append(matchTx.MatchResult.FailedItems, item)
+				ordersToNotify = append(ordersToNotify, order)
+			}
+			continue
+		}
 	}
-
 	return ordersToNotify, nil
 }

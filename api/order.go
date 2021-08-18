@@ -289,7 +289,7 @@ func validatePlaceOrder(req *PlaceOrderReq) error {
 		return InvalidPriceAmountError("minTradeAmount invalid")
 	}
 
-	// order dealine
+	// order deadline
 	expiresAt := time.Unix(req.ExpiresAt, 0).UTC()
 	now := time.Now().UTC()
 	if now.After(expiresAt) {

@@ -194,7 +194,7 @@ func (l *Launcher) createLaunchTransaction(matchTx *model.MatchTransaction) erro
 		CommitTime:  time.Now(),
 	}
 
-	err = l.dao.Transaction(context.Background(), false /* readonly */, func(dao dao.DAO) error {
+	err = l.dao.Transaction(l.ctx, false /* readonly */, func(dao dao.DAO) error {
 		if err := dao.CreateTx(tx); err != nil {
 			return fmt.Errorf("create transaction failed error:%w", err)
 		}
